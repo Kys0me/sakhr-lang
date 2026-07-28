@@ -7,26 +7,30 @@ interface SakhrCallable {
     fun call(interpreter: Interpreter, arguments: List<Any?>): Any?
 }
 
+interface SakhrExtension : SakhrCallable {
+    fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, context: Any?): Any?
+}
+
 class Return(val value: Any?) : RuntimeException()
 
 class SakhrFunction(
     private val declaration: Stmt.Function,
     private val closure: Environment,
     private val isExtension: Boolean
-) : SakhrCallable {
+) : SakhrExtension {
     override fun arity(): Int = declaration.params.size
 
     override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
         return callWithContext(interpreter, arguments, null)
     }
 
-    fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, context: Any?): Any? {
+    override fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, context: Any?): Any? {
         val environment = Environment(closure)
         if (isExtension && context != null) {
             environment.define("السياق", context, true)
         }
-        for (i in 0 until declaration.params.size) {
-            environment.define(declaration.params[i].name.lexeme, arguments[i], false)
+        for ((i, element) in declaration.params.withIndex()) {
+            environment.define(element.name.lexeme, arguments[i], false)
         }
 
         try {
@@ -56,6 +60,36 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
                 val code = (arguments[0] as? Double)?.toInt() ?: 0
                 exitProcess(code)
+            }
+        }, true)
+
+        // Built-in extension methods
+        defineBuiltInExtension("رقم", "نص", 0) { _, _, context -> stringify(context) }
+        defineBuiltInExtension("منطقي", "نص", 0) { _, _, context -> stringify(context) }
+        defineBuiltInExtension("نص", "نص", 0) { _, _, context -> stringify(context) }
+        defineBuiltInExtension("قائمة", "نص", 0) { _, _, context -> stringify(context) }
+
+        defineBuiltInExtension("نص", "طول", 0) { _, _, context -> (context as String).length.toDouble() }
+        defineBuiltInExtension("قائمة", "حجم", 0) { _, _, context -> (context as List<*>).size.toDouble() }
+    }
+
+    private fun defineBuiltInExtension(
+        typeName: String,
+        methodName: String,
+        arity: Int,
+        call: (Interpreter, List<Any?>, Any?) -> Any?
+    ) {
+        globals.define("${typeName}::${methodName}", object : SakhrExtension {
+            override fun arity(): Int = arity
+            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any =
+                throw SakhrError.RuntimeError("لا يمكن استدعاء الدالة الممتدة '${methodName}' مباشرة.", Location(0, 0))
+
+            override fun callWithContext(
+                interpreter: Interpreter,
+                arguments: List<Any?>,
+                context: Any?
+            ): Any? {
+                return call(interpreter, arguments, context)
             }
         }, true)
     }
@@ -96,6 +130,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             is Stmt.Const -> {
                 val value = evaluate(stmt.initializer)
                 environment.define(stmt.name.lexeme, value, true)
+            }
+            is Stmt.Return -> {
+                val value = stmt.value?.let { evaluate(it) }
+                throw Return(value)
             }
         }
     }
@@ -153,7 +191,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 val methodName = expr.name.lexeme
                 
                 val function = globals.getRaw("${typeName}::${methodName}")
-                if (function is SakhrFunction) {
+                if (function is SakhrExtension) {
                     return object : SakhrCallable {
                         override fun arity(): Int = function.arity()
                         override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
@@ -161,17 +199,20 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         }
                     }
                 }
-                
-                if (obj is List<*> && methodName == "حجم") {
-                    return obj.size.toDouble()
-                }
 
                 if (obj is List<*> && methodName == "خذ") {
                      return object : SakhrCallable {
                          override fun arity() = 1
                          override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
-                             val index = (arguments[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس من النوع 'رقم'.", expr.name.location)
-                             if (index < 0 || index >= obj.size) throw SakhrError.RuntimeError("الفهرس خارج النطاق المسموح به.", expr.name.location)
+                             val indexDouble = arguments[0] as? Double ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس من النوع 'رقم'.", expr.name.location)
+                             val index = indexDouble.toInt()
+                             if (index < 0 || index >= obj.size) {
+                                 throw SakhrError.RuntimeError(
+                                     "الفهرس ($index) خارج النطاق المسموح به؛ حجم القائمة هو ${obj.size}.",
+                                     expr.name.location,
+                                     if (obj.isEmpty()) "القائمة فارغة، لا يمكنك استخدام 'خذ' هنا." else "استخدم فهرساً بين 0 و ${obj.size - 1}."
+                                 )
+                             }
                              return obj[index]
                          }
                      }
@@ -207,7 +248,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         return when (obj) {
             is String -> "نص"
             is Double -> "رقم"
-            is Boolean -> "بولين"
+            is Boolean -> "منطقي"
             is List<*> -> "قائمة"
             else -> "عدم"
         }

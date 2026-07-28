@@ -2,14 +2,14 @@ package me.kys.sakhr.lang
 
 class TypeChecker(private val diagnostics: DiagnosticEngine) {
     private val scopes = mutableListOf<MutableMap<String, VariableInfo>>()
-    private val functions = mutableMapOf<String, FunctionSignature>()
+    private val functions = mutableMapOf<String, MutableList<FunctionSignature>>()
     private var currentFunction: FunctionSignature? = null
 
-    enum class FunctionKind { NONE, FUNCTION, EXTENSION }
+    enum class FunctionKind { FUNCTION, EXTENSION }
     data class VariableInfo(val type: SakhrType, val isConstant: Boolean, val isDefined: Boolean)
     data class FunctionSignature(
         val name: String,
-        val params: List<SakhrType>,
+        val params: MutableList<SakhrType>,
         val returnType: SakhrType,
         val kind: FunctionKind,
         val receiverType: SakhrType? = null
@@ -17,14 +17,40 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     init {
         // Built-in functions
-        functions["أكتب"] =
-            FunctionSignature("أكتب", listOf(SakhrType.ANY), SakhrType.VOID, FunctionKind.FUNCTION)
-        functions["إنهاء_البرنامج"] = FunctionSignature(
-            "إنهاء_البرنامج",
-            listOf(SakhrType.NUMBER),
-            SakhrType.VOID,
-            FunctionKind.FUNCTION
-        )
+        registerBuiltIn("أكتب", listOf(SakhrType.NUMBER), SakhrType.VOID)
+        registerBuiltIn("أكتب", listOf(SakhrType.STRING), SakhrType.VOID)
+        registerBuiltIn("أكتب", listOf(SakhrType.BOOLEAN), SakhrType.VOID)
+        registerBuiltIn("أكتب", listOf(SakhrType.LIST), SakhrType.VOID)
+
+        registerBuiltIn("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID)
+
+        // Extension methods
+        registerExtension(SakhrType.NUMBER, "نص", emptyList(), SakhrType.STRING)
+        registerExtension(SakhrType.BOOLEAN, "نص", emptyList(), SakhrType.STRING)
+        registerExtension(SakhrType.STRING, "نص", emptyList(), SakhrType.STRING)
+        registerExtension(SakhrType.LIST, "نص", emptyList(), SakhrType.STRING)
+
+        registerExtension(SakhrType.STRING, "طول", emptyList(), SakhrType.NUMBER)
+        registerExtension(SakhrType.LIST, "حجم", emptyList(), SakhrType.NUMBER)
+        registerExtension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.NUMBER)
+
+        beginScope() // Global scope
+    }
+
+    private fun registerBuiltIn(name: String, params: List<SakhrType>, returnType: SakhrType) {
+        val sig = FunctionSignature(name, params.toMutableList(), returnType, FunctionKind.FUNCTION)
+        functions.getOrPut(name) { mutableListOf() }.add(sig)
+    }
+
+    private fun registerExtension(
+        receiverType: SakhrType,
+        name: String,
+        params: List<SakhrType>,
+        returnType: SakhrType
+    ) {
+        val sig = FunctionSignature(name, params.toMutableList(), returnType, FunctionKind.EXTENSION, receiverType)
+        val key = "${receiverType.lexeme}::${name}"
+        functions.getOrPut(key) { mutableListOf() }.add(sig)
     }
 
     fun check(statements: List<Stmt>) {
@@ -34,24 +60,33 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val kind =
                     if (stmt.receiverType != null) FunctionKind.EXTENSION else FunctionKind.FUNCTION
                 val receiverType = stmt.receiverType?.let { SakhrType.fromLexeme(it.lexeme) }
+                
+                val params = stmt.params.map { p ->
+                    if (p.type == null) {
+                        if (stmt.name.lexeme == "المطلع") SakhrType.LIST else SakhrType.UNKNOWN
+                    } else {
+                        SakhrType.fromLexeme(p.type.lexeme)
+                    }
+                }.toMutableList()
+                
+                val returnType = stmt.returnType?.let { SakhrType.fromLexeme(it.lexeme) } ?: SakhrType.VOID
+                
                 val sig = FunctionSignature(
                     stmt.name.lexeme,
-                    stmt.params.map { SakhrType.fromLexeme(it.type.lexeme) },
-                    SakhrType.fromLexeme(stmt.returnType.lexeme),
+                    params,
+                    returnType,
                     kind,
                     receiverType
                 )
                 val key =
                     if (kind == FunctionKind.EXTENSION) "${receiverType?.lexeme}::${stmt.name.lexeme}" else stmt.name.lexeme
-                functions[key] = sig
+                functions.getOrPut(key) { mutableListOf() }.add(sig)
             }
         }
 
-        beginScope()
         for (stmt in statements) {
             checkStmt(stmt)
         }
-        endScope()
     }
 
     private fun checkStmt(stmt: Stmt) {
@@ -72,7 +107,20 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 } else {
                     stmt.name.lexeme
                 }
-                val sig = functions[key]!!
+                
+                val initialParams = stmt.params.map { p ->
+                    if (p.type == null) {
+                        if (stmt.name.lexeme == "المطلع") SakhrType.LIST else SakhrType.UNKNOWN
+                    } else {
+                        SakhrType.fromLexeme(p.type.lexeme)
+                    }
+                }
+                val returnType = stmt.returnType?.let { SakhrType.fromLexeme(it.lexeme) } ?: SakhrType.VOID
+                
+                // We find the signature we registered in the first pass
+                val sig = functions[key]?.find { it.params == initialParams && it.returnType == returnType }
+                    ?: return 
+
                 val enclosingFunction = currentFunction
                 currentFunction = sig
 
@@ -85,14 +133,23 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
                 for (i in stmt.params.indices) {
                     val param = stmt.params[i]
-                    val paramType = sig.params[i]
-                    declare(param.name, paramType, isConstant = false)
+                    // Use sig.params[i] because it might have been updated by a call site 
+                    // (though in this simple checker, call sites are processed in the second pass along with the body)
+                    // Wait, if a call site is processed BEFORE the function body, sig.params[i] might be updated.
+                    declare(param.name, sig.params[i], isConstant = false)
                     define(param.name)
                 }
 
                 stmt.body.forEach { checkStmt(it) }
 
-                // TODO: Verify return type consistency across all paths
+                if (sig.returnType != SakhrType.VOID && !returnsOnAllPaths(stmt.body)) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "الدالة '${sig.name}' يجب أن تعيد قيمة من نوع '${sig.returnType.lexeme}'.",
+                            stmt.name.location
+                        )
+                    )
+                }
 
                 endScope()
                 currentFunction = enclosingFunction
@@ -100,7 +157,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
             is Stmt.If -> {
                 val condType = checkExpr(stmt.condition)
-                if (condType != SakhrType.BOOLEAN && condType != SakhrType.ANY) {
+                if (condType != SakhrType.BOOLEAN && condType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
                             "شرط 'إن كان' يجب أن يكون من نوع 'بولين'.",
@@ -113,15 +170,67 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             }
 
             is Stmt.Let -> {
-                val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.ANY
-                declare(stmt.name, initType, isConstant = false)
+                val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
+                val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.VOID
+                
+                val finalType = if (explicitType != null) {
+                    if (stmt.initializer != null && !isAssignable(explicitType, initType)) {
+                        diagnostics.report(
+                            SakhrError.TypeError(
+                                "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لمتغير معرف كـ '${explicitType.lexeme}'.",
+                                stmt.name.location
+                            )
+                        )
+                    }
+                    explicitType
+                } else {
+                    initType
+                }
+                
+                declare(stmt.name, finalType, isConstant = false)
                 define(stmt.name)
             }
 
             is Stmt.Const -> {
+                val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = checkExpr(stmt.initializer)
-                declare(stmt.name, initType, isConstant = true)
+                
+                val finalType = if (explicitType != null) {
+                    if (!isAssignable(explicitType, initType)) {
+                        diagnostics.report(
+                            SakhrError.TypeError(
+                                "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لثابت معرف كـ '${explicitType.lexeme}'.",
+                                stmt.name.location
+                            )
+                        )
+                    }
+                    explicitType
+                } else {
+                    initType
+                }
+                
+                declare(stmt.name, finalType, isConstant = true)
                 define(stmt.name)
+            }
+
+            is Stmt.Return -> {
+                if (currentFunction == null) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام 'رجع' خارج الدالة.",
+                            stmt.keyword.location
+                        )
+                    )
+                }
+                val valueType = stmt.value?.let { checkExpr(it) } ?: SakhrType.VOID
+                if (currentFunction != null && !isAssignable(currentFunction!!.returnType, valueType)) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "نوع الراجع '${valueType.lexeme}' لا يتطابق مع نوع إرجاع الدالة '${currentFunction!!.returnType.lexeme}'.",
+                            stmt.keyword.location
+                        )
+                    )
+                }
             }
         }
     }
@@ -134,20 +243,22 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     is String -> SakhrType.STRING
                     is Boolean -> SakhrType.BOOLEAN
                     null -> SakhrType.VOID
-                    else -> SakhrType.ANY
+                    else -> SakhrType.UNKNOWN
                 }
             }
 
             is Expr.Variable -> {
                 val info = lookupVariable(expr.name)
                 if (info == null) {
+                    val allVariables = scopes.flatMap { it.keys }
+                    val suggestion = DiagnosticEngine.findClosest(expr.name.lexeme, allVariables)
+                    val msg = if (suggestion != null) "المتغير '${expr.name.lexeme}' غير معرف؛ هل قصدت '$suggestion'؟" 
+                             else "المتغير '${expr.name.lexeme}' غير معرف في هذا النطاق."
+                    
                     diagnostics.report(
-                        SakhrError.TypeError(
-                            "المتغير '${expr.name.lexeme}' غير معرف في هذا النطاق.",
-                            expr.name.location
-                        )
+                        SakhrError.TypeError(msg, expr.name.location)
                     )
-                    return SakhrType.ANY
+                    return SakhrType.UNKNOWN
                 }
                 if (!info.isDefined) {
                     diagnostics.report(
@@ -206,7 +317,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                                 expr.operator.location
                             )
                         )
-                        SakhrType.ANY
+                        SakhrType.UNKNOWN
                     }
 
                     TokenType.MINUS, TokenType.STAR, TokenType.SLASH -> {
@@ -232,91 +343,65 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     }
 
                     TokenType.EQUALS_EQUALS, TokenType.BANG_EQUALS -> SakhrType.BOOLEAN
-                    else -> SakhrType.ANY
+                    else -> SakhrType.UNKNOWN
                 }
             }
 
             is Expr.Call -> {
+                val argTypes = expr.arguments.map { checkExpr(it) }
                 when (val callee = expr.callee) {
                     is Expr.Variable -> {
-                        val sig = functions[callee.name.lexeme]
+                        val sig = resolveAndCapture(callee.name.lexeme, argTypes)
                         if (sig == null) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "الدالة '${callee.name.lexeme}' غير معرفة.",
+                                    "تعذر العثور على دالة باسم '${callee.name.lexeme}' تطابق هذه الوسائط.",
                                     callee.name.location
                                 )
                             )
-                            return SakhrType.ANY
+                            return SakhrType.UNKNOWN
                         }
-                        validateCall(sig, expr.arguments, expr.paren)
                         sig.returnType
                     }
 
                     is Expr.Get -> {
                         val objType = checkExpr(callee.obj)
                         val methodName = callee.name.lexeme
-                        val sig = functions["${objType.lexeme}::${methodName}"]
+                        val sig = resolveAndCapture("${objType.lexeme}::${methodName}", argTypes)
                         if (sig == null) {
-                            // Built-in methods like 'خذ'
-                            if (objType == SakhrType.LIST && methodName == "خذ") {
-                                if (expr.arguments.size != 1) {
-                                    diagnostics.report(
-                                        SakhrError.TypeError(
-                                            "الدالة 'خذ' تتوقع وسيطاً واحداً.",
-                                            expr.paren.location
-                                        )
-                                    )
-                                } else {
-                                    val argType = checkExpr(expr.arguments[0])
-                                    if (argType != SakhrType.NUMBER && argType != SakhrType.ANY) {
-                                        diagnostics.report(
-                                            SakhrError.TypeError(
-                                                "وسيط الدالة 'خذ' يجب أن يكون رقماً.",
-                                                getExprLocation(expr.arguments[0])
-                                            )
-                                        )
-                                    }
-                                }
-                                return SakhrType.ANY
-                            }
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "النوع '${objType.lexeme}' لا يحتوي على دالة ممتدة باسم '${methodName}'.",
+                                    "النوع '${objType.lexeme}' لا يحتوي على دالة ممتدة باسم '${methodName}' تطابق هذه الوسائط.",
                                     callee.name.location
                                 )
                             )
-                            return SakhrType.ANY
+                            return SakhrType.UNKNOWN
                         }
-                        validateCall(sig, expr.arguments, expr.paren)
                         sig.returnType
                     }
 
                     else -> {
                         checkExpr(callee)
-                        expr.arguments.forEach { checkExpr(it) }
-                        SakhrType.ANY
+                        SakhrType.UNKNOWN
                     }
                 }
             }
 
             is Expr.Get -> {
                 val objType = checkExpr(expr.obj)
-                val methodName = expr.name.lexeme
+                val propertyName = expr.name.lexeme
 
-                if (objType == SakhrType.LIST && methodName == "حجم") return SakhrType.NUMBER
-
-                // If it's just a property access or method reference
-                val sig = functions["${objType.lexeme}::${methodName}"]
-                if (sig != null) return SakhrType.ANY // It's a callable
+                // Handle properties (though we currently only have methods as extensions)
+                // For now, only 'حجم' for List is a property-like access in the interpreter
+                if (objType == SakhrType.LIST && propertyName == "حجم") return SakhrType.NUMBER
 
                 diagnostics.report(
                     SakhrError.TypeError(
-                        "النوع '${objType.lexeme}' لا يحتوي على خاصية باسم '${methodName}'.",
+                        "النوع '${objType.lexeme}' لا يحتوي على خاصية باسم '${propertyName}'.",
                         expr.name.location
                     )
                 )
-                SakhrType.ANY
+                SakhrType.UNKNOWN
             }
 
             is Expr.Context -> {
@@ -327,35 +412,51 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                             expr.keyword.location
                         )
                     )
-                    return SakhrType.ANY
+                    return SakhrType.UNKNOWN
                 }
-                currentFunction?.receiverType ?: SakhrType.ANY
+                currentFunction?.receiverType ?: SakhrType.UNKNOWN
             }
 
             is Expr.Grouping -> checkExpr(expr.expression)
         }
     }
 
-    private fun validateCall(sig: FunctionSignature, arguments: List<Expr>, paren: Token) {
-        if (arguments.size != sig.params.size) {
-            diagnostics.report(
-                SakhrError.TypeError(
-                    "الدالة تتوقع ${sig.params.size} وسائط، ولكن تم تمرير ${arguments.size}.",
-                    paren.location
-                )
-            )
-            return
-        }
-        for (i in arguments.indices) {
-            val argType = checkExpr(arguments[i])
-            if (!isAssignable(sig.params[i], argType)) {
-                diagnostics.report(
-                    SakhrError.TypeError(
-                        "الوسيط رقم ${i + 1} يتوقع نوع '${sig.params[i].lexeme}' ولكن تم تمرير '${argType.lexeme}'.",
-                        getExprLocation(arguments[i])
-                    )
-                )
+    private fun resolveAndCapture(name: String, argTypes: List<SakhrType>): FunctionSignature? {
+        val sigs = functions[name] ?: return null
+        val sig = sigs.find { sig ->
+            if (sig.params.size != argTypes.size) return@find false
+            for (i in sig.params.indices) {
+                if (!isAssignable(sig.params[i], argTypes[i])) return@find false
             }
+            true
+        }
+        
+        if (sig != null) {
+            for (i in sig.params.indices) {
+                if (sig.params[i] == SakhrType.UNKNOWN && argTypes[i] != SakhrType.UNKNOWN) {
+                    sig.params[i] = argTypes[i]
+                }
+            }
+        }
+        return sig
+    }
+
+    private fun returnsOnAllPaths(statements: List<Stmt>): Boolean {
+        for (stmt in statements) {
+            if (returnsOnAllPaths(stmt)) return true
+        }
+        return false
+    }
+
+    private fun returnsOnAllPaths(stmt: Stmt): Boolean {
+        return when (stmt) {
+            is Stmt.Return -> true
+            is Stmt.Block -> returnsOnAllPaths(stmt.statements)
+            is Stmt.If -> {
+                if (stmt.elseBranch == null) false
+                else returnsOnAllPaths(stmt.thenBranch) && returnsOnAllPaths(stmt.elseBranch)
+            }
+            else -> false
         }
     }
 
@@ -391,7 +492,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     }
 
     private fun isAssignable(target: SakhrType, source: SakhrType): Boolean {
-        if (target == SakhrType.ANY || source == SakhrType.ANY) return true
+        if (target == SakhrType.UNKNOWN || source == SakhrType.UNKNOWN) return true
         return target == source
     }
 

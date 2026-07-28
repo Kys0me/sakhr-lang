@@ -18,12 +18,13 @@ sealed class Stmt {
         val name: Token,
         val receiverType: Token?, // For extension methods
         val params: List<Param>,
-        val returnType: Token,
+        val returnType: Token?,
         val body: List<Stmt>
     ) : Stmt()
     data class If(val condition: Expr, val thenBranch: Stmt, val elseBranch: Stmt?) : Stmt()
-    data class Let(val name: Token, val initializer: Expr?) : Stmt()
-    data class Const(val name: Token, val initializer: Expr) : Stmt()
+    data class Let(val name: Token, val type: Token?, val initializer: Expr?) : Stmt()
+    data class Const(val name: Token, val type: Token?, val initializer: Expr) : Stmt()
+    data class Return(val keyword: Token, val value: Expr?) : Stmt()
 }
 
-data class Param(val name: Token, val type: Token)
+data class Param(val name: Token, val type: Token?)

@@ -17,6 +17,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         "ابدأ" to TokenType.BEGIN,
         "انتهى" to TokenType.END,
         "السياق" to TokenType.CONTEXT,
+        "رجع" to TokenType.RETURN,
         "صح" to TokenType.BOOLEAN,
         "خطأ" to TokenType.BOOLEAN
     )
@@ -62,7 +63,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
             }
             '!' -> {
                 if (match('=')) addToken(TokenType.BANG_EQUALS)
-                else diagnostics.report(SakhrError.LexicalError("رمز غير صالح: '!'", Location(line, column)))
+                else diagnostics.report(SakhrError.LexicalError("رمز غير صالح: '!'", Location(line, column - 1)))
             }
             ' ' , '\r', '\t' -> { /* ignore whitespace */ }
             '\n' -> {
@@ -76,7 +77,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
                 } else if (isArabicAlpha(c)) {
                     identifier()
                 } else {
-                    diagnostics.report(SakhrError.LexicalError("رمز غير صالح: '$c'", Location(line, column)))
+                    diagnostics.report(SakhrError.LexicalError("رمز غير صالح: '$c'", Location(line, column - 1)))
                 }
             }
         }
@@ -87,11 +88,15 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         
         val text = source.substring(start, current)
         // Check for multi-word keywords like "إن كان"
-        if (text == "إن" && peek() == ' ' && source.substring(current + 1).startsWith("كان")) {
-             advance() // space
-             advance(); advance(); advance() // ك ا ن
-             addToken(TokenType.IF)
-             return
+        if (text == "إن" && peek() == ' ') {
+            val potentialSpace = current
+            if (source.substring(potentialSpace + 1).startsWith("كان") && 
+                !isArabicAlphaNumeric(source.getOrElse(potentialSpace + 4) { '\u0000' })) {
+                advance() // space
+                advance(); advance(); advance() // ك ا ن
+                addToken(TokenType.IF)
+                return
+            }
         }
 
         var type = keywords[text]
@@ -133,7 +138,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         }
 
         if (isAtEnd()) {
-            diagnostics.report(SakhrError.LexicalError("نص غير منتهٍ؛ يتوقع وجود علامة اقتباس في نهاية النص.", Location(line, column)))
+            diagnostics.report(SakhrError.LexicalError("نص غير منتهٍ؛ يتوقع وجود علامة اقتباس في نهاية النص.", Location(line, column - 1)))
             return
         }
 
@@ -146,13 +151,14 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
     private fun checkTashkeel(c: Char) {
         val tashkeelRange = '\u064B'..'\u0652'
         if (c in tashkeelRange) {
-            diagnostics.report(SakhrError.LexicalError("يمنع استخدام علامات التشكيل خارج النصوص الصريحة.", Location(line, column)))
+            diagnostics.report(SakhrError.LexicalError("يمنع استخدام علامات التشكيل خارج النصوص الصريحة.", Location(line, column - 1)))
         }
     }
 
     private fun isArabicAlpha(c: Char): Boolean {
-        // Arabic block: U+0600–U+06FF
-        return c in '\u0621'..'\u064A' || c == '_'
+        // Arabic block: U+0600–U+06FF, excluding Tashkeel which is handled separately
+        val tashkeelRange = '\u064B'..'\u0652'
+        return (c in '\u0621'..'\u064A' || c == '_') && c !in tashkeelRange
     }
 
     private fun isArabicAlphaNumeric(c: Char): Boolean {

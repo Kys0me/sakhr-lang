@@ -11,6 +11,7 @@ enum class TokenType {
     BEGIN,          // ابدأ
     END,            // انتهى
     CONTEXT,        // السياق
+    RETURN,         // رجع
     
     // Literals
     IDENTIFIER,

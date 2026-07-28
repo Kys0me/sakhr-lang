@@ -18,9 +18,10 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 match(TokenType.PROCEDURE) -> function("إجراء")
                 match(TokenType.LET) -> letDeclaration()
                 match(TokenType.CONST) -> constDeclaration()
+                match(TokenType.RETURN) -> returnStatement()
                 else -> statement()
             }
-        } catch (error: ParseError) {
+        } catch (_: ParseError) {
             synchronize()
             null
         }
@@ -46,24 +47,27 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         if (!check(TokenType.RIGHT_PAREN)) {
             do {
                 val paramName = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للوسيط.")
-                consume(TokenType.COLON, "يُتوقع وجود ':' بعد اسم الوسيط لتحديد نوعه.")
-                
-                var paramType = consume(TokenType.IDENTIFIER, "يجب تحديد نوع للوسيط.")
-                if (paramType.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
-                    val subType = advance()
-                    paramType = Token(paramType.type, paramType.lexeme + " " + subType.lexeme, paramType.literal, paramType.location)
+                var paramType: Token? = null
+                if (match(TokenType.COLON)) {
+                    paramType = consume(TokenType.IDENTIFIER, "يجب تحديد نوع للوسيط.")
+                    if (paramType.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
+                        val subType = advance()
+                        paramType = Token(paramType.type, paramType.lexeme + " " + subType.lexeme, paramType.literal, paramType.location)
+                    }
                 }
-                
                 parameters.add(Param(paramName, paramType))
             } while (match(TokenType.COMMA))
         }
         consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس ')' بعد قائمة الوسائط.")
 
-        consume(TokenType.COLON, "يُتوقع وجود ':' قبل تحديد نوع الراجع.")
-        var returnType = consume(TokenType.IDENTIFIER, "يجب تحديد نوع الراجع.")
-        if (returnType.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
-            val subType = advance()
-            returnType = Token(returnType.type, returnType.lexeme + " " + subType.lexeme, returnType.literal, returnType.location)
+        var returnType: Token? = null
+        if (match(TokenType.COLON)) {
+            var rType = consume(TokenType.IDENTIFIER, "يجب تحديد نوع الراجع.")
+            if (rType.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
+                val subType = advance()
+                rType = Token(rType.type, rType.lexeme + " " + subType.lexeme, rType.literal, rType.location)
+            }
+            returnType = rType
         }
 
         consume(TokenType.BEGIN, "يُتوقع وجود الكلمة المفتاحية 'ابدأ' لبدء متن ال$kind.")
@@ -73,18 +77,45 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
 
     private fun letDeclaration(): Stmt {
         val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للمتغير.")
+        var type: Token? = null
+        if (match(TokenType.COLON)) {
+            type = consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم النوع بعد ':'.")
+            if (type.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
+                val subType = advance()
+                type = Token(type.type, type.lexeme + " " + subType.lexeme, type.literal, type.location)
+            }
+        }
         var initializer: Expr? = null
         if (match(TokenType.EQUALS)) {
             initializer = expression()
         }
-        return Stmt.Let(name, initializer)
+        return Stmt.Let(name, type, initializer)
     }
 
     private fun constDeclaration(): Stmt {
         val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للثابت.")
+        var type: Token? = null
+        if (match(TokenType.COLON)) {
+            type = consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم النوع بعد ':'.")
+            if (type.lexeme == "قائمة" && check(TokenType.IDENTIFIER)) {
+                val subType = advance()
+                type = Token(type.type, type.lexeme + " " + subType.lexeme, type.literal, type.location)
+            }
+        }
         consume(TokenType.EQUALS, "يجب تعيين قيمة ابتدائية للثابت باستخدام '='.")
         val initializer = expression()
-        return Stmt.Const(name, initializer)
+        return Stmt.Const(name, type, initializer)
+    }
+
+    private fun returnStatement(): Stmt {
+        val keyword = previous()
+        var value: Expr? = null
+        // Check if there is an expression after 'رجع'. 
+        // We assume an expression follows if it's not the end of a block or file.
+        if (!check(TokenType.END) && !check(TokenType.ELSE)) {
+            value = expression()
+        }
+        return Stmt.Return(keyword, value)
     }
 
     private fun statement(): Stmt {
@@ -100,28 +131,42 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         
         consume(TokenType.THEN, "يُتوقع وجود الكلمة المفتاحية 'إذن' بعد الشرط.")
         
-        return parseComplexIf(condition)
-    }
-    
-    private fun parseComplexIf(condition: Expr): Stmt {
-        val thenStatements = mutableListOf<Stmt>()
-        while (!check(TokenType.ELSE) && !check(TokenType.END) && !isAtEnd()) {
-            val decl = declaration()
-            if (decl != null) thenStatements.add(decl)
+        var thenBranchIsBlock = false
+        val thenBranch = if (match(TokenType.BEGIN)) {
+            thenBranchIsBlock = true
+            Stmt.Block(block())
+        } else {
+            val thenStatements = mutableListOf<Stmt>()
+            while (!check(TokenType.ELSE) && !check(TokenType.END) && !isAtEnd()) {
+                val decl = declaration()
+                if (decl != null) thenStatements.add(decl)
+            }
+            Stmt.Block(thenStatements)
         }
         
         var elseBranch: Stmt? = null
+        var elseBranchIsBlock = false
         if (match(TokenType.ELSE)) {
-            val elseStatements = mutableListOf<Stmt>()
-            while (!check(TokenType.END) && !isAtEnd()) {
-                val decl = declaration()
-                if (decl != null) elseStatements.add(decl)
+            if (match(TokenType.BEGIN)) {
+                elseBranchIsBlock = true
+                elseBranch = Stmt.Block(block())
+            } else {
+                val elseStatements = mutableListOf<Stmt>()
+                while (!check(TokenType.END) && !isAtEnd()) {
+                    val decl = declaration()
+                    if (decl != null) elseStatements.add(decl)
+                }
+                elseBranch = Stmt.Block(elseStatements)
             }
-            elseBranch = Stmt.Block(elseStatements)
         }
         
-        consume(TokenType.END, "يُتوقع وجود 'انتهى' في نهاية كتلة 'إن كان'.")
-        return Stmt.If(condition, Stmt.Block(thenStatements), elseBranch)
+        val needsEnd = if (elseBranch != null) !elseBranchIsBlock else !thenBranchIsBlock
+        
+        if (needsEnd) {
+            consume(TokenType.END, "يُتوقع وجود 'انتهى' في نهاية كتلة 'إن كان'.")
+        }
+
+        return Stmt.If(condition, thenBranch, elseBranch)
     }
 
     private fun block(): List<Stmt> {
@@ -236,7 +281,15 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس إغلاق ')' بعد التعبير.")
             return Expr.Grouping(expr)
         }
-        throw error(peek(), "يُتوقع وجود تعبير برمي أو قيمة.")
+        
+        val peeked = peek()
+        val suggestion = if (peeked.type == TokenType.IDENTIFIER) {
+            // Better to use the known Arabic keywords from Lexer, but we don't have easy access here.
+            // Let's hardcode the common ones or just rely on the general error for now.
+            null
+        } else null
+
+        throw error(peeked, "يُتوقع وجود تعبير أولي أو قيمة.", suggestion)
     }
 
     private fun match(vararg types: TokenType): Boolean {
@@ -264,9 +317,9 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     private fun peek(): Token = tokens[current]
     private fun previous(): Token = tokens[current - 1]
 
-    private fun error(token: Token, message: String): ParseError {
+    private fun error(token: Token, message: String, suggestion: String? = null): ParseError {
         val fullMsg = if (token.type == TokenType.EOF) "$message (عند نهاية الملف)" else "$message (عند '${token.lexeme}')"
-        diagnostics.report(SakhrError.SyntaxError(fullMsg, token.location))
+        diagnostics.report(SakhrError.SyntaxError(fullMsg, token.location, suggestion))
         return ParseError()
     }
 
