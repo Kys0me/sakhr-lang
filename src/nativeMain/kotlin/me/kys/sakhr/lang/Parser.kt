@@ -6,10 +6,31 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     fun parse(): List<Stmt> {
         val statements = mutableListOf<Stmt>()
         while (!isAtEnd()) {
-            val stmt = declaration()
+            val stmt = topLevelDeclaration()
             if (stmt != null) statements.add(stmt)
         }
         return statements
+    }
+
+    private fun topLevelDeclaration(): Stmt? {
+        return try {
+            when {
+                match(TokenType.PROCEDURE) -> function("إجراء")
+                match(TokenType.STRUCT) -> structDeclaration()
+                match(TokenType.LET) -> letDeclaration()
+                match(TokenType.CONST) -> constDeclaration()
+                else -> {
+                    val token = peek()
+                    if (token.type != TokenType.EOF) {
+                        throw error(token, "لا يمكن كتابة أوامر برمجية مباشرة في هذا المكان. يرجى نقل الكود التنفيذي (مثل استدعاء الدوال، الحلقات، أو الشروط) إلى داخل دالة 'المطلع'.")
+                    }
+                    null
+                }
+            }
+        } catch (_: ParseError) {
+            synchronize()
+            null
+        }
     }
 
     private fun declaration(): Stmt? {
