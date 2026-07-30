@@ -24,7 +24,10 @@ interface SakhrExtension : SakhrCallable {
 
 object SakhrUnit
 
+data class SakhrResult(val value: Any?, val error: Any?)
+
 class Return(val value: Any?) : RuntimeException()
+class SakhrRaiseException(val error: Any?) : RuntimeException()
 class BreakSignal : RuntimeException()
 class ContinueSignal : RuntimeException()
 
@@ -75,9 +78,25 @@ class SakhrFunction(
         try {
             interpreter.executeBlock(declaration.body, environment)
         } catch (returnValue: Return) {
-            return returnValue.value
+            val resultValue = returnValue.value
+            return if (declaration.returnType?.lexeme?.endsWith("؟") == true) {
+                SakhrResult(resultValue, null)
+            } else {
+                resultValue
+            }
+        } catch (raise: SakhrRaiseException) {
+            if (declaration.returnType?.lexeme?.endsWith("؟") == true) {
+                return SakhrResult(null, raise.error)
+            } else {
+                throw raise
+            }
         }
-        return SakhrUnit
+        val unitResult = SakhrUnit
+        return if (declaration.returnType?.lexeme?.endsWith("؟") == true) {
+            SakhrResult(unitResult, null)
+        } else {
+            unitResult
+        }
     }
 }
 
@@ -270,6 +289,13 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             }
         } catch (error: SakhrError.RuntimeError) {
             diagnostics.report(error)
+        } catch (raise: SakhrRaiseException) {
+            diagnostics.report(
+                SakhrError.RuntimeError(
+                    "خطأ غير معالج: ${stringify(raise.error)}",
+                    Location(0, 0)
+                )
+            )
         }
     }
 
@@ -342,24 +368,57 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
 
             is Stmt.Let -> {
                 val value = stmt.initializer?.let { evaluate(it) }
-                environment.define(stmt.name.lexeme, value, false)
+                defineVariables(stmt.names, value, false)
             }
 
             is Stmt.Const -> {
                 val value = evaluate(stmt.initializer)
-                if (value is SakhrInstance) {
-                    // Force immutability for constants
-                    val immutableValue = value.asImmutable()
-                    environment.define(stmt.name.lexeme, immutableValue, true)
-                } else {
-                    environment.define(stmt.name.lexeme, value, true)
-                }
+                val finalValue = if (value is SakhrInstance) value.asImmutable() else value
+                defineVariables(stmt.names, finalValue, true)
             }
 
             is Stmt.Return -> {
                 val value = stmt.value?.let { evaluate(it) }
                 throw Return(value)
             }
+
+            is Stmt.Raise -> {
+                val errorValue = evaluate(stmt.message)
+                throw SakhrRaiseException(errorValue)
+            }
+        }
+    }
+
+    private fun defineVariables(names: List<Token>, value: Any?, isConstant: Boolean) {
+        if (names.size > 1) {
+            if (value is SakhrResult) {
+                environment.define(names[0].lexeme, value.value, isConstant)
+                environment.define(names[1].lexeme, value.error, isConstant)
+                // Any extra names get null
+                for (i in 2 until names.size) {
+                    environment.define(names[i].lexeme, null, isConstant)
+                }
+            } else {
+                // If it's not a SakhrResult, first variable gets the value, others null
+                environment.define(names[0].lexeme, value, isConstant)
+                for (i in 1 until names.size) {
+                    environment.define(names[i].lexeme, null, isConstant)
+                }
+            }
+        } else if (names.isNotEmpty()) {
+            val finalValue = if (value is SakhrResult) {
+                if (value.error != null) {
+                    // Unhandled error
+                    throw SakhrError.RuntimeError(
+                        "خطأ غير معالج: ${stringify(value.error)}",
+                        names[0].location
+                    )
+                }
+                value.value
+            } else {
+                value
+            }
+            environment.define(names[0].lexeme, finalValue, isConstant)
         }
     }
 

@@ -36,9 +36,10 @@ sealed class Stmt {
     ) : Stmt()
     data class Break(val keyword: Token) : Stmt()
     data class Continue(val keyword: Token) : Stmt()
-    data class Let(val name: Token, val type: Token?, val initializer: Expr?) : Stmt()
-    data class Const(val name: Token, val type: Token?, val initializer: Expr) : Stmt()
+    data class Let(val names: List<Token>, val type: Token?, val initializer: Expr?) : Stmt()
+    data class Const(val names: List<Token>, val type: Token?, val initializer: Expr) : Stmt()
     data class Return(val keyword: Token, val value: Expr?) : Stmt()
+    data class Raise(val keyword: Token, val message: Expr) : Stmt()
     data class Struct(
         val name: Token,
         val fields: List<Field>

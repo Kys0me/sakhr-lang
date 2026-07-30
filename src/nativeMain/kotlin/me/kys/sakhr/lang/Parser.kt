@@ -41,6 +41,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 match(TokenType.LET) -> letDeclaration()
                 match(TokenType.CONST) -> constDeclaration()
                 match(TokenType.RETURN) -> returnStatement()
+                match(TokenType.RAISE) -> raiseStatement()
                 else -> statement()
             }
         } catch (_: ParseError) {
@@ -50,15 +51,21 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     /**
-     * Parses a type, handling nested list types like "قائمة(نص)" or "قائمة(قائمة(رقم))".
+     * Parses a type, handling nested list types like "قائمة(نص)" or "قائمة(قائمة(رقم))"
+     * and optional types like "رقم؟".
      */
     private fun parseType(errorMessage: String): Token {
-        val type = consumeType(errorMessage)
+        var type = consumeType(errorMessage)
         if (type.lexeme == "قائمة" && match(TokenType.LEFT_PAREN)) {
             val innerType = parseType("يجب تحديد نوع العناصر داخل القائمة.")
             consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس إغلاق ')' بعد نوع القائمة.")
-            return Token(type.type, "قائمة(${innerType.lexeme})", type.literal, type.location)
+            type = Token(type.type, "قائمة(${innerType.lexeme})", type.literal, type.location)
         }
+        
+        if (match(TokenType.QUESTION_MARK)) {
+            type = Token(type.type, type.lexeme + "؟", type.literal, type.location)
+        }
+        
         return type
     }
 
@@ -136,7 +143,12 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     private fun letDeclaration(): Stmt {
-        val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للمتغير.")
+        val names = mutableListOf<Token>()
+        names.add(consume(TokenType.IDENTIFIER, "يجب تحديد اسم للمتغير."))
+        while (match(TokenType.COMMA)) {
+            names.add(consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم متغير بعد الفاصلة."))
+        }
+        
         var type: Token? = null
         if (match(TokenType.COLON)) {
             type = parseType("يُتوقع وجود اسم النوع بعد ':'.")
@@ -145,18 +157,23 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         if (match(TokenType.EQUALS)) {
             initializer = expression()
         }
-        return Stmt.Let(name, type, initializer)
+        return Stmt.Let(names, type, initializer)
     }
 
     private fun constDeclaration(): Stmt {
-        val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للثابت.")
+        val names = mutableListOf<Token>()
+        names.add(consume(TokenType.IDENTIFIER, "يجب تحديد اسم للثابت."))
+        while (match(TokenType.COMMA)) {
+            names.add(consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم ثابت بعد الفاصلة."))
+        }
+        
         var type: Token? = null
         if (match(TokenType.COLON)) {
             type = parseType("يُتوقع وجود اسم النوع بعد ':'.")
         }
         consume(TokenType.EQUALS, "يجب تعيين قيمة ابتدائية للثابت باستخدام '='.")
         val initializer = expression()
-        return Stmt.Const(name, type, initializer)
+        return Stmt.Const(names, type, initializer)
     }
 
     private fun returnStatement(): Stmt {
@@ -168,6 +185,12 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             value = expression()
         }
         return Stmt.Return(keyword, value)
+    }
+
+    private fun raiseStatement(): Stmt {
+        val keyword = previous()
+        val message = expression()
+        return Stmt.Raise(keyword, message)
     }
 
     private fun statement(): Stmt {
@@ -504,7 +527,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             when (peek().type) {
                 TokenType.PROCEDURE, TokenType.LET, TokenType.CONST,
                 TokenType.IF, TokenType.WHILE, TokenType.FOR_EACH,
-                TokenType.RETURN -> return
+                TokenType.RETURN, TokenType.RAISE -> return
                 else -> advance()
             }
         }

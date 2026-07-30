@@ -89,6 +89,8 @@ class Cli {
                 }
             } catch (e: SakhrError.RuntimeError) {
                 diagnostics.report(e)
+            } catch (e: SakhrRaiseException) {
+                diagnostics.report(SakhrError.RuntimeError("خطأ غير معالج: ${interpreter.stringify(e.error)}", Location(0, 0)))
             }
         } else {
             println("خطأ: تعذر العثور على دالة 'المطلع' لبدء البرنامج.")

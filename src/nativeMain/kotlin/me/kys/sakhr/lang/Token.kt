@@ -18,6 +18,7 @@ enum class TokenType {
     IN,             // في
     BREAK,          // اكفف
     CONTINUE,       // امض
+    RAISE,          // بلغ
     AND,            // و
     OR,             // أو
     NOT,            // ليس
@@ -56,6 +57,7 @@ enum class TokenType {
     RIGHT_PAREN,    // )
     LEFT_BRACKET,   // [
     RIGHT_BRACKET,  // ]
+    QUESTION_MARK,  // ؟
     
     EOF
 }

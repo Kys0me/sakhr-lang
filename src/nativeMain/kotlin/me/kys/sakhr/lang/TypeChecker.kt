@@ -347,62 +347,87 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.VOID
 
-                if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
-                    diagnostics.report(
-                        SakhrError.TypeError(
-                            "يجب تحديد نوع المتغير '${stmt.name.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
-                            stmt.name.location
-                        )
-                    )
-                }
-
-                val finalType = if (explicitType != null) {
-                    if (stmt.initializer != null && !isAssignable(explicitType, initType)) {
+                if (stmt.names.size > 1) {
+                    // For destructuring, we usually don't have an explicit type for the whole thing.
+                    // If we do, it's tricky. For now, we allow it if no explicit type is provided.
+                    if (explicitType != null) {
+                         diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند استخدام التفكيك (تعيين عدة متغيرات).", stmt.names[0].location))
+                    }
+                    
+                    for (name in stmt.names) {
+                        declare(name, SakhrType.UNKNOWN, isConstant = false)
+                        define(name)
+                    }
+                } else {
+                    val nameToken = stmt.names[0]
+                    if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لمتغير معرف كـ '${explicitType.lexeme}'.",
-                                stmt.name.location
+                                "يجب تحديد نوع المتغير '${nameToken.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
+                                nameToken.location
                             )
                         )
                     }
-                    explicitType
-                } else {
-                    initType
+
+                    val finalType = if (explicitType != null) {
+                        if (stmt.initializer != null && !isAssignable(explicitType, initType)) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لمتغير معرف كـ '${explicitType.lexeme}'.",
+                                    nameToken.location
+                                )
+                            )
+                        }
+                        explicitType
+                    } else {
+                        initType
+                    }
+                    
+                    declare(nameToken, finalType, isConstant = false)
+                    define(nameToken)
                 }
-                
-                declare(stmt.name, finalType, isConstant = false)
-                define(stmt.name)
             }
 
             is Stmt.Const -> {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = checkExpr(stmt.initializer)
                 
-                if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
-                    diagnostics.report(
-                        SakhrError.TypeError(
-                            "يجب تحديد نوع الثابت '${stmt.name.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
-                            stmt.name.location
-                        )
-                    )
-                }
-
-                val finalType = if (explicitType != null) {
-                    if (!isAssignable(explicitType, initType)) {
+                if (stmt.names.size > 1) {
+                    if (explicitType != null) {
+                        diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند استخدام التفكيك (تعيين عدة ثوابت).", stmt.names[0].location))
+                    }
+                    for (name in stmt.names) {
+                        declare(name, SakhrType.UNKNOWN, isConstant = true)
+                        define(name)
+                    }
+                } else {
+                    val nameToken = stmt.names[0]
+                    if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لثابت معرف كـ '${explicitType.lexeme}'.",
-                                stmt.name.location
+                                "يجب تحديد نوع الثابت '${nameToken.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
+                                nameToken.location
                             )
                         )
                     }
-                    explicitType
-                } else {
-                    initType
+
+                    val finalType = if (explicitType != null) {
+                        if (!isAssignable(explicitType, initType)) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لثابت معرف كـ '${explicitType.lexeme}'.",
+                                    nameToken.location
+                                )
+                            )
+                        }
+                        explicitType
+                    } else {
+                        initType
+                    }
+                    
+                    declare(nameToken, finalType, isConstant = true)
+                    define(nameToken)
                 }
-                
-                declare(stmt.name, finalType, isConstant = true)
-                define(stmt.name)
             }
 
             is Stmt.Return -> {
@@ -423,6 +448,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         )
                     )
                 }
+            }
+            
+            is Stmt.Raise -> {
+                checkExpr(stmt.message)
             }
 
             is Stmt.Struct -> {
@@ -980,8 +1009,20 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun isAssignable(target: SakhrType, source: SakhrType): Boolean {
         if (target == SakhrType.UNKNOWN || source == SakhrType.UNKNOWN) return true
-        if (source == SakhrType.NULL_LITERAL) return target != SakhrType.VOID
+        if (source == SakhrType.NULL_LITERAL) return target.isOptional || target != SakhrType.VOID
+        
+        // If target is optional, we allow assignment from its base type
+        if (target.isOptional && !source.isOptional && target.lexeme == source.lexeme) {
+             if (target.lexeme == "قائمة") {
+                 if (target.elementType == null || source.elementType == null) return true
+                 return isAssignable(target.elementType, source.elementType)
+             }
+             return true
+        }
+
         if (target.lexeme != source.lexeme) return false
+        if (target.isOptional != source.isOptional && !target.isOptional) return false
+
         if (target.lexeme == "قائمة") {
             if (target.elementType == null || source.elementType == null) return true
             return isAssignable(target.elementType, source.elementType)

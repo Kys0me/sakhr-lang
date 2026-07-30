@@ -43,11 +43,11 @@ class DiagnosticEngine {
 
         source?.let { src ->
             val lines = src.split('\n')
-            if (error.location.line <= lines.size) {
+            if (error.location.line > 0 && error.location.line <= lines.size) {
                 val lineText = lines[error.location.line - 1]
                 println("  |")
                 println("${error.location.line.toString().padStart(3)} | $lineText")
-                println("  | ${" ".repeat(error.location.column - 1)}^")
+                println("  | ${" ".repeat(maxOf(0, error.location.column - 1))}^")
             }
         }
 
