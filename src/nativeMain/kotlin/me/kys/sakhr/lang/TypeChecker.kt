@@ -27,33 +27,13 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     init {
         beginScope() // Global scope
         
-        // Built-in functions
-        registerBuiltIn("أكتب", listOf(SakhrType.NUMBER), SakhrType.VOID)
-        registerBuiltIn("أكتب", listOf(SakhrType.STRING), SakhrType.VOID)
-        registerBuiltIn("أكتب", listOf(SakhrType.BOOLEAN), SakhrType.VOID)
-        registerBuiltIn("أكتب", listOf(SakhrType.LIST), SakhrType.VOID)
+        for (func in BuiltIns.functions) {
+            registerBuiltIn(func.name, func.params, func.returnType)
+        }
 
-        registerBuiltIn("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID)
-        registerBuiltIn("اقرأ", emptyList(), SakhrType.STRING)
-        registerBuiltIn("رقم", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER)
-        registerBuiltIn("نص", listOf(SakhrType.UNKNOWN), SakhrType.STRING)
-        registerBuiltIn("منطقي", listOf(SakhrType.UNKNOWN), SakhrType.BOOLEAN)
-
-        // Extension methods
-        registerExtension(SakhrType.NUMBER, "نص", emptyList(), SakhrType.STRING)
-        registerExtension(SakhrType.BOOLEAN, "نص", emptyList(), SakhrType.STRING)
-        registerExtension(SakhrType.STRING, "نص", emptyList(), SakhrType.STRING)
-        registerExtension(SakhrType.LIST, "نص", emptyList(), SakhrType.STRING)
-
-        registerExtension(SakhrType.STRING, "طول", emptyList(), SakhrType.NUMBER)
-        registerExtension(SakhrType.LIST, "حجم", emptyList(), SakhrType.NUMBER)
-        registerExtension(SakhrType.LIST, "أضف", listOf(SakhrType.UNKNOWN), SakhrType.VOID)
-        registerExtension(SakhrType.LIST, "أزل", listOf(SakhrType.UNKNOWN), SakhrType.VOID)
-        registerExtension(SakhrType.LIST, "أدخل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID)
-        registerExtension(SakhrType.LIST, "فهرس", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER)
-        registerExtension(SakhrType.LIST, "استبدل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID)
-        // Element types are erased, so 'خذ' returns UNKNOWN (assignable to anything)
-        registerExtension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.UNKNOWN)
+        for (ext in BuiltIns.extensions) {
+            registerExtension(ext.receiverType, ext.name, ext.params, ext.returnType)
+        }
     }
 
     private fun registerBuiltIn(name: String, params: List<SakhrType>, returnType: SakhrType) {
