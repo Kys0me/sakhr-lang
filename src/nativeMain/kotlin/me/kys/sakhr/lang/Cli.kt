@@ -83,7 +83,7 @@ class Cli {
         val mainFunc = interpreter.globals.getRaw("المطلع")
         if (mainFunc is SakhrCallable) {
             try {
-                val result = mainFunc.call(interpreter, listOf(args))
+                val result = mainFunc.call(interpreter, listOf(args), location = Location(0, 0))
                 if (result != null && result != SakhrUnit) {
                     println(interpreter.stringify(result))
                 }

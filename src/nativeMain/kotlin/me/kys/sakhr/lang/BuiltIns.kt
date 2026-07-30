@@ -2,8 +2,8 @@ package me.kys.sakhr.lang
 
 import kotlin.system.exitProcess
 
-typealias BuiltInCall = (Interpreter, List<Any?>, Map<String, Any?>) -> Any?
-typealias BuiltInExtensionCall = (Interpreter, List<Any?>, Map<String, Any?>, Any?) -> Any?
+typealias BuiltInCall = (Interpreter, List<Any?>, Map<String, Any?>, Location) -> Any?
+typealias BuiltInExtensionCall = (Interpreter, List<Any?>, Map<String, Any?>, Any?, Location) -> Any?
 
 data class BuiltInFunction(
     val name: String,
@@ -35,46 +35,46 @@ object BuiltIns {
     init {
         // --- Standard Functions ---
 
-        val printCall: BuiltInCall = { interpreter, args, _ ->
+        val printCall: BuiltInCall = { interpreter, args, _, _ ->
             println(interpreter.stringify(args[0]))
             SakhrUnit
         }
 
         function("أكتب", listOf(SakhrType.UNKNOWN), SakhrType.VOID, printCall)
 
-        function("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID) { _, args, _ ->
+        function("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID) { _, args, _, _ ->
             val code = (args[0] as? Double)?.toInt() ?: 0
             exitProcess(code)
             SakhrUnit
         }
 
-        function("اقرأ", emptyList(), SakhrType.STRING) { _, _, _ ->
+        function("اقرأ", emptyList(), SakhrType.STRING) { _, _, _, _ ->
             readlnOrNull()
         }
 
         // --- Extension Methods ---
 
-        val toStrExt: BuiltInExtensionCall = { interpreter, _, _, context -> interpreter.stringify(context) }
+        val toStrExt: BuiltInExtensionCall = { interpreter, _, _, context, _ -> interpreter.stringify(context) }
         extension(SakhrType.NUMBER, "كنص", emptyList(), SakhrType.STRING, toStrExt)
         extension(SakhrType.BOOLEAN, "كنص", emptyList(), SakhrType.STRING, toStrExt)
         extension(SakhrType.STRING, "كنص", emptyList(), SakhrType.STRING, toStrExt)
         extension(SakhrType.LIST, "كنص", emptyList(), SakhrType.STRING, toStrExt)
 
-        extension(SakhrType.STRING, "طول", emptyList(), SakhrType.NUMBER) { _, _, _, context ->
+        extension(SakhrType.STRING, "طول", emptyList(), SakhrType.NUMBER) { _, _, _, context, _ ->
             (context as String).length.toDouble()
         }
 
-        extension(SakhrType.LIST, "حجم", emptyList(), SakhrType.NUMBER) { _, _, _, context ->
+        extension(SakhrType.LIST, "حجم", emptyList(), SakhrType.NUMBER) { _, _, _, context, _ ->
             (context as List<*>).size.toDouble()
         }
 
-        extension(SakhrType.LIST, "أضف", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
+        extension(SakhrType.LIST, "أضف", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context, _ ->
             @Suppress("UNCHECKED_CAST")
             (context as MutableList<Any?>).add(args[0])
             SakhrUnit
         }
 
-        extension(SakhrType.LIST, "أزل", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
+        extension(SakhrType.LIST, "أزل", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context, _ ->
             @Suppress("UNCHECKED_CAST")
             val list = context as MutableList<Any?>
             val arg = args[0]
@@ -89,40 +89,40 @@ object BuiltIns {
             SakhrUnit
         }
 
-        extension(SakhrType.LIST, "أدخل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
+        extension(SakhrType.LIST, "أدخل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context, location ->
             @Suppress("UNCHECKED_CAST")
             val list = context as MutableList<Any?>
-            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", Location(0, 0))
+            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", location)
             if (index in 0..list.size) {
                 list.add(index, args[1])
             }
             SakhrUnit
         }
 
-        extension(SakhrType.LIST, "فهرس", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER) { _, args, _, context ->
+        extension(SakhrType.LIST, "فهرس", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER) { _, args, _, context, _ ->
             (context as List<Any?>).indexOf(args[0]).toDouble()
         }
 
-        extension(SakhrType.LIST, "استبدل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
+        extension(SakhrType.LIST, "استبدل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context, location ->
             @Suppress("UNCHECKED_CAST")
             val list = context as MutableList<Any?>
-            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", Location(0, 0))
+            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", location)
             if (index in list.indices) {
                 list[index] = args[1]
             } else {
-                throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", Location(0, 0))
+                throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", location)
             }
             SakhrUnit
         }
 
-        extension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.UNKNOWN) { _, args, _, context ->
+        extension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.UNKNOWN) { _, args, _, context, location ->
             val list = context as List<Any?>
-            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", Location(0, 0))
+            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", location)
             if (index in list.indices) {
                 val result = list[index]
                 if (result is SakhrInstance) result.asImmutable() else result
             } else {
-                throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", Location(0, 0))
+                throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", location)
             }
         }
     }

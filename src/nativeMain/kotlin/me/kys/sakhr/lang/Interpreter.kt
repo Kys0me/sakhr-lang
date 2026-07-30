@@ -7,7 +7,8 @@ interface SakhrCallable {
     fun call(
         interpreter: Interpreter,
         arguments: List<Any?>,
-        namedArguments: Map<String, Any?> = emptyMap()
+        namedArguments: Map<String, Any?> = emptyMap(),
+        location: Location
     ): Any?
 }
 
@@ -16,7 +17,8 @@ interface SakhrExtension : SakhrCallable {
         interpreter: Interpreter,
         arguments: List<Any?>,
         namedArguments: Map<String, Any?>,
-        context: Any?
+        context: Any?,
+        location: Location
     ): Any?
 }
 
@@ -38,15 +40,17 @@ class SakhrFunction(
     override fun call(
         interpreter: Interpreter,
         arguments: List<Any?>,
-        namedArguments: Map<String, Any?>
+        namedArguments: Map<String, Any?>,
+        location: Location
     ): Any? =
-        callWithContext(interpreter, arguments, namedArguments, null)
+        callWithContext(interpreter, arguments, namedArguments, null, location)
 
     override fun callWithContext(
         interpreter: Interpreter,
         arguments: List<Any?>,
         namedArguments: Map<String, Any?>,
-        context: Any?
+        context: Any?,
+        location: Location
     ): Any? {
         val environment = Environment(closure)
         if (isExtension && context != null) {
@@ -97,39 +101,45 @@ class SakhrStruct(
     override fun call(
         interpreter: Interpreter,
         arguments: List<Any?>,
-        namedArguments: Map<String, Any?>
+        namedArguments: Map<String, Any?>,
+        location: Location
     ): Any {
-        val instance = SakhrInstance(this)
+        interpreter.pushStructInitialization(this, location)
+        try {
+            val instance = SakhrInstance(this)
 
-        // 1. Initial values from declaration (defaults)
-        for (field in declaration.fields) {
-            instance.fields[field.name.lexeme] = if (field.initializer != null) {
-                interpreter.evaluateInEnvironment(field.initializer, closure)
-            } else {
-                null
+            // 1. Initial values from declaration (defaults)
+            for (field in declaration.fields) {
+                instance.fields[field.name.lexeme] = if (field.initializer != null) {
+                    interpreter.evaluateInEnvironment(field.initializer, closure)
+                } else {
+                    null
+                }
             }
-        }
 
-        // 2. Positional arguments
-        for (i in arguments.indices) {
-            if (i < declaration.fields.size) {
-                val field = declaration.fields[i]
-                val value = arguments[i]
+            // 2. Positional arguments
+            for (i in arguments.indices) {
+                if (i < declaration.fields.size) {
+                    val field = declaration.fields[i]
+                    val value = arguments[i]
+                    validateAndSetField(instance, field.name, value, interpreter)
+                }
+            }
+
+            // 3. Named arguments
+            for ((name, value) in namedArguments) {
+                val field = declaration.fields.find { it.name.lexeme == name }
+                    ?: throw SakhrError.RuntimeError(
+                        "البنية '${declaration.name.lexeme}' لا تحتوي على حقل باسم '$name'.",
+                        location
+                    )
                 validateAndSetField(instance, field.name, value, interpreter)
             }
-        }
 
-        // 3. Named arguments
-        for ((name, value) in namedArguments) {
-            val field = declaration.fields.find { it.name.lexeme == name }
-                ?: throw SakhrError.RuntimeError(
-                    "البنية '${declaration.name.lexeme}' لا تحتوي على حقل باسم '$name'.",
-                    Location(0, 0)
-                )
-            validateAndSetField(instance, field.name, value, interpreter)
+            return instance
+        } finally {
+            interpreter.popStructInitialization()
         }
-
-        return instance
     }
 
     fun getFieldType(name: String): String? = fieldTypes[name]
@@ -181,6 +191,7 @@ class SakhrInstance(val struct: SakhrStruct) {
 class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     val globals = Environment()
     private var environment = globals
+    private val structInitializationStack = mutableListOf<SakhrStruct>()
 
     init {
         for (func in BuiltIns.functions) {
@@ -189,9 +200,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 override fun call(
                     interpreter: Interpreter,
                     arguments: List<Any?>,
-                    namedArguments: Map<String, Any?>
+                    namedArguments: Map<String, Any?>,
+                    location: Location
                 ): Any? =
-                    func.call(interpreter, arguments, namedArguments)
+                    func.call(interpreter, arguments, namedArguments, location)
             }, true)
         }
 
@@ -200,8 +212,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 ext.receiverType.lexeme,
                 ext.name,
                 ext.params.size
-            ) { interpreter, args, namedArgs, context ->
-                ext.call(interpreter, args, namedArgs, context)
+            ) { interpreter, args, namedArgs, context, location ->
+                ext.call(interpreter, args, namedArgs, context, location)
             }
         }
     }
@@ -210,27 +222,45 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         typeName: String,
         methodName: String,
         arity: Int,
-        call: (Interpreter, List<Any?>, Map<String, Any?>, Any?) -> Any?
+        call: (Interpreter, List<Any?>, Map<String, Any?>, Any?, Location) -> Any?
     ) {
         globals.define("${typeName}::${methodName}", object : SakhrExtension {
             override fun arity(): Int = arity
             override fun call(
                 interpreter: Interpreter,
                 arguments: List<Any?>,
-                namedArguments: Map<String, Any?>
+                namedArguments: Map<String, Any?>,
+                location: Location
             ): Any =
                 throw SakhrError.RuntimeError(
                     "لا يمكن استدعاء الدالة الممتدة '${methodName}' مباشرة.",
-                    Location(0, 0)
+                    location
                 )
 
             override fun callWithContext(
                 interpreter: Interpreter,
                 arguments: List<Any?>,
                 namedArguments: Map<String, Any?>,
-                context: Any?
-            ): Any? = call(interpreter, arguments, namedArguments, context)
+                context: Any?,
+                location: Location
+            ): Any? = call(interpreter, arguments, namedArguments, context, location)
         }, true)
+    }
+
+    fun pushStructInitialization(struct: SakhrStruct, location: Location) {
+        if (structInitializationStack.size > 100) {
+            throw SakhrError.RuntimeError(
+                "تم اكتشاف تكرار لا نهائي أو عمق كبير جداً أثناء تهيئة البنية '${struct.declaration.name.lexeme}'.",
+                location
+            )
+        }
+        structInitializationStack.add(struct)
+    }
+
+    fun popStructInitialization() {
+        if (structInitializationStack.isNotEmpty()) {
+            structInitializationStack.removeAt(structInitializationStack.size - 1)
+        }
     }
 
     override fun execute(statements: List<Stmt>) {
@@ -503,7 +533,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                     )
                 }
 
-                callee.call(this, arguments, namedArguments)
+                callee.call(this, arguments, namedArguments, expr.paren.location)
             }
 
             is Expr.Get -> {
@@ -525,9 +555,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         override fun call(
                             interpreter: Interpreter,
                             arguments: List<Any?>,
-                            namedArguments: Map<String, Any?>
+                            namedArguments: Map<String, Any?>,
+                            location: Location
                         ): Any? =
-                            function.callWithContext(interpreter, arguments, namedArguments, obj)
+                            function.callWithContext(interpreter, arguments, namedArguments, obj, location)
                     }
                 }
 

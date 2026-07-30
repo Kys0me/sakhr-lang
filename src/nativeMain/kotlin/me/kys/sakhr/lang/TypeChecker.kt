@@ -724,6 +724,11 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 // For now, only 'حجم' for List is a property-like access in the interpreter
                 if (objType == SakhrType.LIST && propertyName == "حجم") return SakhrType.NUMBER
 
+                // Check for extension methods
+                if (lookupFunctions("${objType.lexeme}::$propertyName").isNotEmpty()) {
+                    return SakhrType.UNKNOWN // Function/Method reference
+                }
+
                 diagnostics.report(
                     SakhrError.TypeError(
                         "النوع '${objType.lexeme}' لا يحتوي على خاصية باسم '${propertyName}'.",
