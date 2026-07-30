@@ -4,6 +4,8 @@ import kotlin.system.exitProcess
 
 interface SakhrCallable {
     fun arity(): Int
+    fun minArity(): Int = arity()
+    fun maxArity(): Int = arity()
     fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?> = emptyMap()): Any?
 }
 
@@ -21,6 +23,8 @@ class SakhrFunction(
     private val isExtension: Boolean
 ) : SakhrExtension {
     override fun arity(): Int = declaration.params.size
+    override fun minArity(): Int = declaration.params.count { it.defaultValue == null }
+    override fun maxArity(): Int = declaration.params.size
 
     override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? =
         callWithContext(interpreter, arguments, namedArguments, null)
@@ -31,16 +35,15 @@ class SakhrFunction(
             environment.define("السياق", context, true)
         }
         
-        // Positional arguments
-        for ((i, element) in declaration.params.withIndex()) {
-            if (i < arguments.size) {
-                environment.define(element.name.lexeme, arguments[i], false)
-            } else if (namedArguments.containsKey(element.name.lexeme)) {
-                environment.define(element.name.lexeme, namedArguments[element.name.lexeme], false)
-            } else {
-                // Should be caught by arity check if not optional (Sakhr doesn't have optional params yet)
-                environment.define(element.name.lexeme, null, false)
+        // Match arguments to parameters
+        for ((i, param) in declaration.params.withIndex()) {
+            val value = when {
+                i < arguments.size -> arguments[i]
+                namedArguments.containsKey(param.name.lexeme) -> namedArguments[param.name.lexeme]
+                param.defaultValue != null -> interpreter.evaluateInEnvironment(param.defaultValue, environment)
+                else -> null // Should be unreachable if arity check passes
             }
+            environment.define(param.name.lexeme, value, false)
         }
 
         try {
@@ -475,8 +478,14 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                     throw SakhrError.RuntimeError("يُسمح باستدعاء الدوال فقط.", expr.paren.location)
                 }
 
-                if (callee !is SakhrStruct && (arguments.size + namedArguments.size) != callee.arity()) {
-                    throw SakhrError.RuntimeError("تتوقع الدالة ${callee.arity()} من الوسائط، ولكن تم تمرير ${arguments.size + namedArguments.size}.", expr.paren.location)
+                val totalArgs = arguments.size + namedArguments.size
+                if (callee !is SakhrStruct && (totalArgs < callee.minArity() || totalArgs > callee.maxArity())) {
+                    val expectedStr = if (callee.minArity() == callee.maxArity()) {
+                        "${callee.arity()}"
+                    } else {
+                        "بين ${callee.minArity()} و ${callee.maxArity()}"
+                    }
+                    throw SakhrError.RuntimeError("تتوقع الدالة $expectedStr من الوسائط، ولكن تم تمرير $totalArgs.", expr.paren.location)
                 }
 
                 callee.call(this, arguments, namedArguments)

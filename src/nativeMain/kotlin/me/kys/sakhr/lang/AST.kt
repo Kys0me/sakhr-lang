@@ -45,5 +45,5 @@ sealed class Stmt {
     ) : Stmt()
 }
 
-data class Param(val name: Token, val type: Token?)
+data class Param(val name: Token, val type: Token?, val defaultValue: Expr? = null)
 data class Field(val name: Token, val type: Token?, val initializer: Expr?)

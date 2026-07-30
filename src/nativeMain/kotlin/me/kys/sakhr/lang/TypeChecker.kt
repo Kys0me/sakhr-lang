@@ -19,7 +19,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         val params: MutableList<SakhrType>,
         val returnType: SakhrType,
         val kind: FunctionKind,
-        val receiverType: SakhrType? = null
+        val receiverType: SakhrType? = null,
+        val paramNames: List<String> = emptyList(),
+        val isParamRequired: List<Boolean> = emptyList()
     )
 
     init {
@@ -55,7 +57,13 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     }
 
     private fun registerBuiltIn(name: String, params: List<SakhrType>, returnType: SakhrType) {
-        val sig = FunctionSignature(name, params.toMutableList(), returnType, FunctionKind.FUNCTION)
+        val sig = FunctionSignature(
+            name,
+            params.toMutableList(),
+            returnType,
+            FunctionKind.FUNCTION,
+            isParamRequired = List(params.size) { true }
+        )
         scopes[0].functions.getOrPut(name) { mutableListOf() }.add(sig)
     }
 
@@ -65,7 +73,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         params: List<SakhrType>,
         returnType: SakhrType
     ) {
-        val sig = FunctionSignature(name, params.toMutableList(), returnType, FunctionKind.EXTENSION, receiverType)
+        val sig = FunctionSignature(
+            name,
+            params.toMutableList(),
+            returnType,
+            FunctionKind.EXTENSION,
+            receiverType,
+            isParamRequired = List(params.size) { true }
+        )
         val key = "${receiverType.lexeme}::${name}"
         scopes[0].functions.getOrPut(key) { mutableListOf() }.add(sig)
     }
@@ -87,7 +102,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 
                 val params = stmt.params.map { p ->
                     if (p.type == null) {
-                        if (stmt.name.lexeme == "المطلع") SakhrType.LIST else SakhrType.UNKNOWN
+                        if (stmt.name.lexeme == "المطلع") {
+                            SakhrType.LIST
+                        } else if (p.defaultValue != null) {
+                            // Try to infer type from default value
+                            inferType(p.defaultValue)
+                        } else {
+                            SakhrType.UNKNOWN
+                        }
                     } else {
                         SakhrType.fromLexeme(p.type.lexeme)
                     }
@@ -100,7 +122,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     params,
                     returnType,
                     kind,
-                    receiverType
+                    receiverType,
+                    paramNames = stmt.params.map { it.name.lexeme },
+                    isParamRequired = stmt.params.map { it.defaultValue == null }
                 )
                 val key =
                     if (kind == FunctionKind.EXTENSION) "${receiverType?.lexeme}::${stmt.name.lexeme}" else stmt.name.lexeme
@@ -158,12 +182,47 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             is Stmt.Function -> {
                 val kind = if (stmt.receiverType != null) FunctionKind.EXTENSION else FunctionKind.FUNCTION
                 val receiverType = stmt.receiverType?.let { SakhrType.fromLexeme(it.lexeme) }
-                val initialParams = stmt.params.map { p ->
-                    if (p.type == null) {
-                        if (stmt.name.lexeme == "المطلع") SakhrType.LIST else SakhrType.UNKNOWN
-                    } else {
-                        SakhrType.fromLexeme(p.type.lexeme)
+                
+                // Restriction for 'المطلع'
+                if (stmt.name.lexeme == "المطلع") {
+                    for (param in stmt.params) {
+                        if (param.defaultValue != null) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "لا يمكن تحديد قيم افتراضية لوسائط دالة 'المطلع'.",
+                                    param.name.location
+                                )
+                            )
+                        }
                     }
+                }
+
+                val initialParams = stmt.params.map { p ->
+                    val type = if (p.type == null) {
+                        if (stmt.name.lexeme == "المطلع") {
+                            SakhrType.LIST
+                        } else if (p.defaultValue != null) {
+                            val defaultType = checkExpr(p.defaultValue)
+                            defaultType
+                        } else {
+                            SakhrType.UNKNOWN
+                        }
+                    } else {
+                        val declaredType = SakhrType.fromLexeme(p.type.lexeme)
+                        if (p.defaultValue != null) {
+                            val defaultType = checkExpr(p.defaultValue)
+                            if (!isAssignable(declaredType, defaultType)) {
+                                diagnostics.report(
+                                    SakhrError.TypeError(
+                                        "نوع القيمة الافتراضية '${defaultType.lexeme}' لا يتوافق مع نوع الوسيط '${declaredType.lexeme}'.",
+                                        getExprLocation(p.defaultValue)
+                                    )
+                                )
+                            }
+                        }
+                        declaredType
+                    }
+                    type
                 }
                 val returnType = stmt.returnType?.let { SakhrType.fromLexeme(it.lexeme) } ?: SakhrType.VOID
 
@@ -177,7 +236,15 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val scope = scopes.last()
                 val sigs = scope.functions[key] ?: mutableListOf()
                 val sig = sigs.find { it.params == initialParams && it.returnType == returnType }
-                    ?: FunctionSignature(stmt.name.lexeme, initialParams.toMutableList(), returnType, kind, receiverType)
+                    ?: FunctionSignature(
+                        stmt.name.lexeme, 
+                        initialParams.toMutableList(), 
+                        returnType, 
+                        kind, 
+                        receiverType,
+                        paramNames = stmt.params.map { it.name.lexeme },
+                        isParamRequired = stmt.params.map { it.defaultValue == null }
+                    )
 
                 val enclosingFunction = currentFunction
                 currentFunction = sig
@@ -552,17 +619,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             is Expr.Call -> {
                 val namedArgTypes = mutableMapOf<String, SakhrType>()
                 val positionalArgTypes = mutableListOf<SakhrType>()
-                val allArgTypes = mutableListOf<SakhrType>()
                 
                 for (argExpr in expr.arguments) {
                     if (argExpr is Expr.Assignment) {
                         val type = checkExpr(argExpr.value)
                         namedArgTypes[argExpr.name.lexeme] = type
-                        allArgTypes.add(type)
                     } else {
                         val type = checkExpr(argExpr)
                         positionalArgTypes.add(type)
-                        allArgTypes.add(type)
                     }
                 }
 
@@ -578,8 +642,20 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         return validateStructCall(struct, positionalArgTypes, namedArgTypes, expr.paren.location)
                     }
 
-                    val sig = resolveAndCapture(name, allArgTypes)
+                    val sig = resolveAndCapture(name, positionalArgTypes, namedArgTypes)
                     if (sig != null) return sig.returnType
+                    
+                    val functions = lookupFunctions(name)
+                    if (functions.isNotEmpty()) {
+                        val totalArgs = positionalArgTypes.size + namedArgTypes.size
+                        diagnostics.report(
+                            SakhrError.TypeError(
+                                "لا توجد نسخة من الدالة '$name' تطابق هذه الوسائط ($totalArgs وسائط).",
+                                expr.paren.location
+                            )
+                        )
+                        return SakhrType.UNKNOWN
+                    }
                     
                     // If not a direct function/struct name, it might be a variable holding a struct/function
                 }
@@ -591,13 +667,12 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     
                     // Special case for 'خذ' on a List
                     if (objType.lexeme == "قائمة" && methodName == "خذ") {
-                        val argTypes = expr.arguments.map { checkExpr(it) }
-                        if (argTypes.size == 1 && (argTypes[0] == SakhrType.NUMBER || argTypes[0] == SakhrType.UNKNOWN)) {
+                        if (positionalArgTypes.size == 1 && namedArgTypes.isEmpty() && (positionalArgTypes[0] == SakhrType.NUMBER || positionalArgTypes[0] == SakhrType.UNKNOWN)) {
                             return objType.elementType ?: SakhrType.UNKNOWN
                         }
                     }
 
-                    val sig = resolveAndCapture("${objType.lexeme}::${methodName}", allArgTypes)
+                    val sig = resolveAndCapture("${objType.lexeme}::${methodName}", positionalArgTypes, namedArgTypes)
                     if (sig == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
@@ -758,30 +833,66 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         return SakhrType(struct.name)
     }
 
-    private fun resolveAndCapture(name: String, argTypes: List<SakhrType>): FunctionSignature? {
+    private fun resolveAndCapture(
+        name: String,
+        positional: List<SakhrType>,
+        named: Map<String, SakhrType>
+    ): FunctionSignature? {
         val sigs = lookupFunctions(name)
         val sig = sigs.find { sig ->
-            if (sig.params.size != argTypes.size) return@find false
+            val totalArgs = positional.size + named.size
+            val minRequired = sig.isParamRequired.count { it }
+            if (totalArgs < minRequired || totalArgs > sig.params.size) return@find false
+            
+            val mappedTypes = arrayOfNulls<SakhrType>(sig.params.size)
+            val satisfied = BooleanArray(sig.params.size)
+            
+            // 1. Positional
+            for (i in positional.indices) {
+                mappedTypes[i] = positional[i]
+                satisfied[i] = true
+            }
+            
+            // 2. Named
+            for ((argName, type) in named) {
+                val index = sig.paramNames.indexOf(argName)
+                if (index == -1) return@find false // Unknown parameter name
+                if (satisfied[index]) return@find false // Duplicate (positional and named)
+                mappedTypes[index] = type
+                satisfied[index] = true
+            }
+            
+            // 3. Check types and required params
             for (i in sig.params.indices) {
-                if (!isAssignable(sig.params[i], argTypes[i])) return@find false
+                val providedType = mappedTypes[i]
+                if (providedType != null) {
+                    if (!isAssignable(sig.params[i], providedType)) return@find false
+                } else if (i < sig.isParamRequired.size && sig.isParamRequired[i]) {
+                    // Required parameter not provided
+                    return@find false
+                }
             }
             true
         }
         
         if (sig != null) {
+            val mappedTypes = arrayOfNulls<SakhrType>(sig.params.size)
+            for (i in positional.indices) mappedTypes[i] = positional[i]
+            for ((argName, type) in named) {
+                val index = sig.paramNames.indexOf(argName)
+                if (index != -1) mappedTypes[index] = type
+            }
+
             var modified = false
             val newParams = sig.params.toMutableList()
             for (i in sig.params.indices) {
-                if (sig.params[i] == SakhrType.UNKNOWN && argTypes[i] != SakhrType.UNKNOWN) {
-                    newParams[i] = argTypes[i]
+                val providedType = mappedTypes[i]
+                if (providedType != null && sig.params[i] == SakhrType.UNKNOWN && providedType != SakhrType.UNKNOWN) {
+                    newParams[i] = providedType
                     modified = true
                 }
             }
             if (modified) {
-                // If it's a global built-in or extension, we don't want to permanently mutate it
-                // unless it's a user function where we are inferring types.
-                // For simplicity, we only mutate if it's NOT a built-in (already in functions before check())
-                // Actually, a better way is to check if it's the first pass collection.
                 return sig.copy(params = newParams)
             }
         }
@@ -871,6 +982,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun endScope() {
         scopes.removeAt(scopes.size - 1)
+    }
+
+    private fun inferType(expr: Expr): SakhrType {
+        return try {
+            checkExpr(expr)
+        } catch (_: Exception) {
+            SakhrType.UNKNOWN
+        }
     }
 
     private fun getExprLocation(expr: Expr): Location {

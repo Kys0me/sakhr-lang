@@ -64,7 +64,11 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 if (match(TokenType.COLON)) {
                     paramType = parseType("يجب تحديد نوع للوسيط.")
                 }
-                parameters.add(Param(paramName, paramType))
+                var defaultValue: Expr? = null
+                if (match(TokenType.EQUALS)) {
+                    defaultValue = expression()
+                }
+                parameters.add(Param(paramName, paramType, defaultValue))
             } while (match(TokenType.COMMA))
         }
         consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس ')' بعد قائمة الوسائط.")
