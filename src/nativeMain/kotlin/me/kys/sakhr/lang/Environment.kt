@@ -10,32 +10,37 @@ class Environment(private val enclosing: Environment? = null) {
     }
 
     fun get(name: Token): Any? {
-        if (values.containsKey(name.lexeme)) return values[name.lexeme]
-        if (enclosing != null) return enclosing.get(name)
+        var env: Environment? = this
+        while (env != null) {
+            val values = env.values
+            if (values.containsKey(name.lexeme)) return values[name.lexeme]
+            env = env.enclosing
+        }
         throw SakhrError.RuntimeError("المتغير '${name.lexeme}' غير معرف.", name.location)
     }
 
     fun getRaw(name: String): Any? {
-        if (values.containsKey(name)) return values[name]
-        if (enclosing != null) return enclosing.getRaw(name)
+        var env: Environment? = this
+        while (env != null) {
+            val values = env.values
+            if (values.containsKey(name)) return values[name]
+            env = env.enclosing
+        }
         return null
     }
 
     fun assign(name: Token, value: Any?) {
-        if (constants.contains(name.lexeme)) {
-            throw SakhrError.RuntimeError("لا يمكن إعادة تعيين قيمة للمتغير '${name.lexeme}' لأنه معرف كـ 'ألزم'.", name.location)
+        var env: Environment? = this
+        while (env != null) {
+            if (env.constants.contains(name.lexeme)) {
+                throw SakhrError.RuntimeError("لا يمكن إعادة تعيين قيمة للمتغير '${name.lexeme}' لأنه معرف كـ 'ألزم'.", name.location)
+            }
+            if (env.values.containsKey(name.lexeme)) {
+                env.values[name.lexeme] = value
+                return
+            }
+            env = env.enclosing
         }
-        
-        if (values.containsKey(name.lexeme)) {
-            values[name.lexeme] = value
-            return
-        }
-
-        if (enclosing != null) {
-            enclosing.assign(name, value)
-            return
-        }
-
         throw SakhrError.RuntimeError("المتغير '${name.lexeme}' غير معرف.", name.location)
     }
 }

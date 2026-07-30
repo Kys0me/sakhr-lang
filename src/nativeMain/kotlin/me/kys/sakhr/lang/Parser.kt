@@ -337,16 +337,14 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 val desugaredValue = Expr.Binary(expr, binaryOp, value)
                 return Expr.Set(expr.obj, expr.name, desugaredValue)
             } else if (expr is Expr.Index) {
-                 if (operator.type == TokenType.EQUALS) {
-                     // We don't have Expr.IndexSet, but we can treat it as a call to a hidden method or just not support it yet.
-                     // The user asked for "structs inside list are immutable and cannot be changed".
-                     // So we should probably disallow assigning to list elements if they are structs.
-                     // For now, let's just throw an error or handle it in the interpreter.
-                     error(operator, "تعيين قيم عناصر القائمة مباشرة غير مدعوم حالياً.")
-                 }
+                // Assigning to list elements directly (by index) is not supported;
+                // callers should use the 'استبدل' extension instead.
+                throw error(operator, "تعيين قيم عناصر القائمة مباشرة غير مدعوم حالياً.")
             }
 
-            error(operator, "لا يمكن التعيين لهذه القيمة؛ هدف التعيين غير صالح.")
+            // Reaching here means the target is not assignable (the valid
+            // Variable/Get cases return above); abort so 'synchronize' can recover.
+            throw error(operator, "لا يمكن التعيين لهذه القيمة؛ هدف التعيين غير صالح.")
         }
 
         return expr

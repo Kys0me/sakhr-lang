@@ -28,8 +28,11 @@ data class SakhrResult(val value: Any?, val error: Any?)
 
 class Return(val value: Any?) : RuntimeException()
 class SakhrRaiseException(val error: Any?) : RuntimeException()
-class BreakSignal : RuntimeException()
-class ContinueSignal : RuntimeException()
+
+// Loop control signals carry no state, so they are reused as singletons to
+// avoid an allocation (and a backtrace capture) on every break/continue.
+object BreakSignal : RuntimeException()
+object ContinueSignal : RuntimeException()
 
 class SakhrFunction(
     private val declaration: Stmt.Function,
@@ -363,8 +366,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 }
             }
 
-            is Stmt.Break -> throw BreakSignal()
-            is Stmt.Continue -> throw ContinueSignal()
+            is Stmt.Break -> throw BreakSignal
+            is Stmt.Continue -> throw ContinueSignal
 
             is Stmt.Let -> {
                 val value = stmt.initializer?.let { evaluate(it) }
@@ -440,25 +443,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 val left = evaluate(expr.left)
                 val right = evaluate(expr.right)
                 when (expr.operator.type) {
-                    TokenType.GREATER -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l > r
-                    }
-
-                    TokenType.GREATER_EQUALS -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l >= r
-                    }
-
-                    TokenType.LESS -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l < r
-                    }
-
-                    TokenType.LESS_EQUALS -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l <= r
-                    }
+                    TokenType.GREATER -> numOp(expr.operator, left, right) { l, r -> l > r }
+                    TokenType.GREATER_EQUALS -> numOp(expr.operator, left, right) { l, r -> l >= r }
+                    TokenType.LESS -> numOp(expr.operator, left, right) { l, r -> l < r }
+                    TokenType.LESS_EQUALS -> numOp(expr.operator, left, right) { l, r -> l <= r }
 
                     TokenType.EQUALS_EQUALS -> left == right
                     TokenType.BANG_EQUALS -> left != right
@@ -473,18 +461,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         )
                     }
 
-                    TokenType.MINUS -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l - r
-                    }
+                    TokenType.MINUS -> numOp(expr.operator, left, right) { l, r -> l - r }
+                    TokenType.STAR -> numOp(expr.operator, left, right) { l, r -> l * r }
 
-                    TokenType.STAR -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
-                        l * r
-                    }
-
-                    TokenType.SLASH -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
+                    TokenType.SLASH -> numOp(expr.operator, left, right) { l, r ->
                         if (r == 0.0) throw SakhrError.RuntimeError(
                             "لا يمكن القسمة على صفر.",
                             expr.operator.location
@@ -492,8 +472,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         l / r
                     }
 
-                    TokenType.PERCENT -> {
-                        val (l, r) = checkNumberOperands(expr.operator, left, right)
+                    TokenType.PERCENT -> numOp(expr.operator, left, right) { l, r ->
                         if (r == 0.0) throw SakhrError.RuntimeError(
                             "لا يمكن حساب باقي القسمة على صفر.",
                             expr.operator.location
@@ -532,7 +511,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 }
             }
 
-            is Expr.ListLiteral -> expr.elements.map { evaluate(it) }.toMutableList()
+            is Expr.ListLiteral -> expr.elements.mapTo(ArrayList(expr.elements.size)) { evaluate(it) }
 
             is Expr.Index -> {
                 val obj = evaluate(expr.obj)
@@ -739,12 +718,15 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         )
     }
 
-    private fun checkNumberOperands(
+    // Applies [block] to both operands as numbers without allocating a Pair.
+    // Inlined so the lambda and the smart-cast operands stay on the stack.
+    private inline fun <R> numOp(
         operator: Token,
         left: Any?,
-        right: Any?
-    ): Pair<Double, Double> {
-        if (left is Double && right is Double) return Pair(left, right)
+        right: Any?,
+        block: (Double, Double) -> R
+    ): R {
+        if (left is Double && right is Double) return block(left, right)
         throw SakhrError.RuntimeError(
             "العملية '${operator.lexeme}' تتطلب أرقاماً.",
             operator.location

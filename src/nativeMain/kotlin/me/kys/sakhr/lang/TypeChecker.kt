@@ -666,8 +666,6 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     }
                 }
 
-                val calleeType = checkExpr(expr.callee)
-                
                 // If it's a direct variable reference, it might be a function name (for overloading)
                 if (expr.callee is Expr.Variable) {
                     val name = expr.callee.name.lexeme
@@ -721,6 +719,12 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     return sig.returnType
                 }
 
+                // Fallback: only reached when the callee is neither a Variable nor a
+                // Get handled above (e.g. a variable holding a struct value used as a
+                // constructor). Checking the callee's type here avoids re-checking
+                // Variable/Get callees, which previously produced duplicate diagnostics.
+                val calleeType = checkExpr(expr.callee)
+
                 // Check if the type itself is a struct (constructor)
                 val struct = lookupStruct(calleeType.lexeme)
                 if (struct != null) {
@@ -749,11 +753,8 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (fieldType != null) return fieldType
                 }
 
-                // Handle properties (though we currently only have methods as extensions)
-                // For now, only 'حجم' for List is a property-like access in the interpreter
-                if (objType == SakhrType.LIST && propertyName == "حجم") return SakhrType.NUMBER
-
-                // Check for extension methods
+                // Check for extension methods ('حجم' included: the interpreter treats
+                // bare 'list.حجم' as a bound extension reference, not a number)
                 if (lookupFunctions("${objType.lexeme}::$propertyName").isNotEmpty()) {
                     return SakhrType.UNKNOWN // Function/Method reference
                 }
@@ -950,6 +951,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     private fun returnsOnAllPaths(stmt: Stmt): Boolean {
         return when (stmt) {
             is Stmt.Return -> true
+            // Raising an error also terminates the current path, so a branch
+            // ending in 'بلغ' counts as returning on that path.
+            is Stmt.Raise -> true
             is Stmt.Block -> returnsOnAllPaths(stmt.statements)
             is Stmt.If -> {
                 if (stmt.elseBranch == null) false
@@ -1009,7 +1013,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun isAssignable(target: SakhrType, source: SakhrType): Boolean {
         if (target == SakhrType.UNKNOWN || source == SakhrType.UNKNOWN) return true
-        if (source == SakhrType.NULL_LITERAL) return target.isOptional || target != SakhrType.VOID
+        // 'فارغ' is only assignable to optional types; letting it satisfy any
+        // non-optional type would defeat the optionality ('؟') guarantees.
+        if (source == SakhrType.NULL_LITERAL) return target.isOptional
         
         // If target is optional, we allow assignment from its base type
         if (target.isOptional && !source.isOptional && target.lexeme == source.lexeme) {

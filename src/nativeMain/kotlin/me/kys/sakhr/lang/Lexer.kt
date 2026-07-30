@@ -145,7 +145,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         // Check for multi-word keywords like "إن كان" or "ما دام"
         if (text == "إن" && peek() == ' ') {
             val potentialSpace = current
-            if (source.substring(potentialSpace + 1).startsWith("كان") &&
+            if (source.startsWith("كان", potentialSpace + 1) &&
                 !isArabicAlphaNumeric(source.getOrElse(potentialSpace + 4) { '\u0000' })
             ) {
                 advance() // space
@@ -157,7 +157,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
 
         if (text == "ما" && peek() == ' ') {
             val potentialSpace = current
-            if (source.substring(potentialSpace + 1).startsWith("دام") &&
+            if (source.startsWith("دام", potentialSpace + 1) &&
                 !isArabicAlphaNumeric(source.getOrElse(potentialSpace + 4) { '\u0000' })
             ) {
                 advance() // space
@@ -188,13 +188,11 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
 
         val text = source.substring(start, current)
         // Normalize Arabic-Indic digits for Double parsing
-        val normalized = text.map {
-            if (it in '\u0660'..'\u0669') {
-                (it.code - 0x0660 + '0'.code).toChar()
-            } else {
-                it
+        val normalized = buildString(text.length) {
+            for (ch in text) {
+                append(if (ch in '\u0660'..'\u0669') (ch.code - 0x0660 + '0'.code).toChar() else ch)
             }
-        }.joinToString("")
+        }
 
         addToken(TokenType.NUMBER, normalized.toDouble())
     }
@@ -221,8 +219,10 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         addToken(TokenType.STRING, value)
     }
 
+    // Hoisted so the range isn't re-created on every character check.
+    private val tashkeelRange = '\u064B'..'\u0652'
+
     private fun checkTashkeel(c: Char) {
-        val tashkeelRange = '\u064B'..'\u0652'
         if (c in tashkeelRange) {
             diagnostics.report(
                 SakhrError.LexicalError(
@@ -235,7 +235,6 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
 
     private fun isArabicAlpha(c: Char): Boolean {
         // Arabic block: U+0600–U+06FF, excluding Tashkeel which is handled separately
-        val tashkeelRange = '\u064B'..'\u0652'
         return (c in '\u0621'..'\u064A' || c == '_') && c !in tashkeelRange
     }
 
