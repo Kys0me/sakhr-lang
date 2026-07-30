@@ -16,6 +16,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         return try {
             when {
                 match(TokenType.PROCEDURE) -> function("إجراء")
+                match(TokenType.STRUCT) -> structDeclaration()
                 match(TokenType.LET) -> letDeclaration()
                 match(TokenType.CONST) -> constDeclaration()
                 match(TokenType.RETURN) -> returnStatement()
@@ -27,16 +28,31 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         }
     }
 
+    /**
+     * Parses a type, handling nested list types like "قائمة(نص)" or "قائمة(قائمة(رقم))".
+     */
+    private fun parseType(errorMessage: String): Token {
+        val type = consumeType(errorMessage)
+        if (type.lexeme == "قائمة" && match(TokenType.LEFT_PAREN)) {
+            val innerType = parseType("يجب تحديد نوع العناصر داخل القائمة.")
+            consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس إغلاق ')' بعد نوع القائمة.")
+            return Token(type.type, "قائمة(${innerType.lexeme})", type.literal, type.location)
+        }
+        return type
+    }
+
     private fun function(kind: String): Stmt {
         var receiverType: Token? = null
         var name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم لل$kind.")
         
-        // Handle multi-word receiver type (e.g. "قائمة نص")
-        name = mergeListSubtype(name)
-
         if (match(TokenType.DOUBLE_COLON)) {
             receiverType = name
             name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم الدالة بعد '::'.")
+        } else if (name.lexeme == "قائمة" && check(TokenType.LEFT_PAREN)) {
+             // Handle case where receiver is a list type: قائمة(نص)::أكتب
+             receiverType = parseTypeFromInitial(name)
+             consume(TokenType.DOUBLE_COLON, "يُتوقع وجود '::' بعد نوع السياق.")
+             name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم الدالة بعد '::'.")
         }
 
         consume(TokenType.LEFT_PAREN, "يُتوقع وجود قوس '(' بعد اسم ال$kind.")
@@ -46,7 +62,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 val paramName = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للوسيط.")
                 var paramType: Token? = null
                 if (match(TokenType.COLON)) {
-                    paramType = mergeListSubtype(consumeType("يجب تحديد نوع للوسيط."))
+                    paramType = parseType("يجب تحديد نوع للوسيط.")
                 }
                 parameters.add(Param(paramName, paramType))
             } while (match(TokenType.COMMA))
@@ -55,7 +71,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
 
         var returnType: Token? = null
         if (match(TokenType.COLON)) {
-            returnType = mergeListSubtype(consumeType("يجب تحديد نوع الراجع."))
+            returnType = parseType("يجب تحديد نوع الراجع.")
         }
 
         consume(TokenType.BEGIN, "يُتوقع وجود الكلمة المفتاحية 'ابدأ' لبدء متن ال$kind.")
@@ -63,23 +79,42 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         return Stmt.Function(name, receiverType, parameters, returnType, body)
     }
 
-    /**
-     * Merges a multi-word list type such as "قائمة نص" into a single type token.
-     * Returns the token unchanged if it is not a list type.
-     */
-    private fun mergeListSubtype(type: Token): Token {
-        if (type.lexeme == "قائمة" && (check(TokenType.IDENTIFIER) || check(TokenType.NULL))) {
-            val subType = advance()
-            return Token(type.type, "${type.lexeme} ${subType.lexeme}", type.literal, type.location)
+    private fun parseTypeFromInitial(initial: Token): Token {
+        if (initial.lexeme == "قائمة" && match(TokenType.LEFT_PAREN)) {
+            val innerType = parseType("يجب تحديد نوع العناصر داخل القائمة.")
+            consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس إغلاق ')' بعد نوع القائمة.")
+            return Token(initial.type, "قائمة(${innerType.lexeme})", initial.literal, initial.location)
         }
-        return type
+        return initial
+    }
+
+    private fun structDeclaration(): Stmt {
+        val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للبنية.")
+        consume(TokenType.BEGIN, "يُتوقع وجود الكلمة المفتاحية 'ابدأ' لبدء تعريف البنية.")
+
+        val fields = mutableListOf<Field>()
+        while (!check(TokenType.END) && !isAtEnd()) {
+            val fieldName = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للحقل.")
+            var fieldType: Token? = null
+            if (match(TokenType.COLON)) {
+                fieldType = parseType("يُتوقع وجود اسم النوع بعد ':'.")
+            }
+            var initializer: Expr? = null
+            if (match(TokenType.EQUALS)) {
+                initializer = expression()
+            }
+            fields.add(Field(fieldName, fieldType, initializer))
+        }
+
+        consume(TokenType.END, "يُتوقع وجود 'انتهى' لإنهاء تعريف البنية.")
+        return Stmt.Struct(name, fields)
     }
 
     private fun letDeclaration(): Stmt {
         val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للمتغير.")
         var type: Token? = null
         if (match(TokenType.COLON)) {
-            type = mergeListSubtype(consumeType("يُتوقع وجود اسم النوع بعد ':'."))
+            type = parseType("يُتوقع وجود اسم النوع بعد ':'.")
         }
         var initializer: Expr? = null
         if (match(TokenType.EQUALS)) {
@@ -92,7 +127,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للثابت.")
         var type: Token? = null
         if (match(TokenType.COLON)) {
-            type = mergeListSubtype(consumeType("يُتوقع وجود اسم النوع بعد ':'."))
+            type = parseType("يُتوقع وجود اسم النوع بعد ':'.")
         }
         consume(TokenType.EQUALS, "يجب تعيين قيمة ابتدائية للثابت باستخدام '='.")
         val initializer = expression()
@@ -237,6 +272,30 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 val binaryOp = Token(binaryType, operator.lexeme.substring(0, operator.lexeme.length - 1), null, operator.location)
                 val desugaredValue = Expr.Binary(expr, binaryOp, value)
                 return Expr.Assignment(name, desugaredValue)
+            } else if (expr is Expr.Get) {
+                if (operator.type == TokenType.EQUALS) {
+                    return Expr.Set(expr.obj, expr.name, value)
+                }
+                
+                // Desugar compound assignments for properties: o.f += v -> o.f = o.f + v
+                val binaryType = when (operator.type) {
+                    TokenType.PLUS_EQUALS -> TokenType.PLUS
+                    TokenType.MINUS_EQUALS -> TokenType.MINUS
+                    TokenType.STAR_EQUALS -> TokenType.STAR
+                    TokenType.SLASH_EQUALS -> TokenType.SLASH
+                    else -> throw error(operator, "عملية تعيين غير معروفة.")
+                }
+                val binaryOp = Token(binaryType, operator.lexeme.substring(0, operator.lexeme.length - 1), null, operator.location)
+                val desugaredValue = Expr.Binary(expr, binaryOp, value)
+                return Expr.Set(expr.obj, expr.name, desugaredValue)
+            } else if (expr is Expr.Index) {
+                 if (operator.type == TokenType.EQUALS) {
+                     // We don't have Expr.IndexSet, but we can treat it as a call to a hidden method or just not support it yet.
+                     // The user asked for "structs inside list are immutable and cannot be changed".
+                     // So we should probably disallow assigning to list elements if they are structs.
+                     // For now, let's just throw an error or handle it in the interpreter.
+                     error(operator, "تعيين قيم عناصر القائمة مباشرة غير مدعوم حالياً.")
+                 }
             }
 
             error(operator, "لا يمكن التعيين لهذه القيمة؛ هدف التعيين غير صالح.")
@@ -325,6 +384,11 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             } else if (match(TokenType.DOT)) {
                 val name = consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم بعد النقطة '.' للوصول إلى الخاصية أو الدالة.")
                 expr = Expr.Get(expr, name)
+            } else if (match(TokenType.LEFT_BRACKET)) {
+                val bracket = previous()
+                val index = expression()
+                consume(TokenType.RIGHT_BRACKET, "يُتوقع وجود قوس إغلاق ']' بعد الفهرس.")
+                expr = Expr.Index(expr, bracket, index)
             } else {
                 break
             }

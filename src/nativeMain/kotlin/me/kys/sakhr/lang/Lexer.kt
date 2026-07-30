@@ -27,6 +27,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         "أو" to TokenType.OR,
         "ليس" to TokenType.NOT,
         "عدم" to TokenType.NULL,
+        "بنية" to TokenType.STRUCT,
         "صح" to TokenType.BOOLEAN,
         "خطأ" to TokenType.BOOLEAN
     )

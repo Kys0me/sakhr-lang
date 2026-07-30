@@ -10,6 +10,8 @@ sealed class Expr {
     data class Variable(val name: Token) : Expr()
     data class Call(val callee: Expr, val paren: Token, val arguments: List<Expr>) : Expr()
     data class Get(val obj: Expr, val name: Token) : Expr()
+    data class Index(val obj: Expr, val bracket: Token, val index: Expr) : Expr()
+    data class Set(val obj: Expr, val name: Token, val value: Expr) : Expr()
     data class Context(val keyword: Token) : Expr()
     data class Assignment(val name: Token, val value: Expr) : Expr()
 }
@@ -37,6 +39,11 @@ sealed class Stmt {
     data class Let(val name: Token, val type: Token?, val initializer: Expr?) : Stmt()
     data class Const(val name: Token, val type: Token?, val initializer: Expr) : Stmt()
     data class Return(val keyword: Token, val value: Expr?) : Stmt()
+    data class Struct(
+        val name: Token,
+        val fields: List<Field>
+    ) : Stmt()
 }
 
 data class Param(val name: Token, val type: Token?)
+data class Field(val name: Token, val type: Token?, val initializer: Expr?)

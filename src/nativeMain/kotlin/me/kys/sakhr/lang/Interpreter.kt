@@ -4,11 +4,11 @@ import kotlin.system.exitProcess
 
 interface SakhrCallable {
     fun arity(): Int
-    fun call(interpreter: Interpreter, arguments: List<Any?>): Any?
+    fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?> = emptyMap()): Any?
 }
 
 interface SakhrExtension : SakhrCallable {
-    fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, context: Any?): Any?
+    fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>, context: Any?): Any?
 }
 
 class Return(val value: Any?) : RuntimeException()
@@ -22,16 +22,25 @@ class SakhrFunction(
 ) : SakhrExtension {
     override fun arity(): Int = declaration.params.size
 
-    override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? =
-        callWithContext(interpreter, arguments, null)
+    override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? =
+        callWithContext(interpreter, arguments, namedArguments, null)
 
-    override fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, context: Any?): Any? {
+    override fun callWithContext(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>, context: Any?): Any? {
         val environment = Environment(closure)
         if (isExtension && context != null) {
             environment.define("السياق", context, true)
         }
+        
+        // Positional arguments
         for ((i, element) in declaration.params.withIndex()) {
-            environment.define(element.name.lexeme, arguments[i], false)
+            if (i < arguments.size) {
+                environment.define(element.name.lexeme, arguments[i], false)
+            } else if (namedArguments.containsKey(element.name.lexeme)) {
+                environment.define(element.name.lexeme, namedArguments[element.name.lexeme], false)
+            } else {
+                // Should be caught by arity check if not optional (Sakhr doesn't have optional params yet)
+                environment.define(element.name.lexeme, null, false)
+            }
         }
 
         try {
@@ -43,6 +52,94 @@ class SakhrFunction(
     }
 }
 
+class SakhrStruct(
+    val declaration: Stmt.Struct,
+    val closure: Environment
+) : SakhrCallable {
+    private val fieldTypes = mutableMapOf<String, String>()
+
+    init {
+        for (field in declaration.fields) {
+            val typeLexeme = field.type?.lexeme
+            if (typeLexeme != null) {
+                fieldTypes[field.name.lexeme] = typeLexeme
+            }
+        }
+    }
+
+    override fun arity(): Int = 0 // Variadic-like for named args
+
+    override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any {
+        val instance = SakhrInstance(this)
+        
+        // 1. Initial values from declaration (defaults)
+        for (field in declaration.fields) {
+            instance.fields[field.name.lexeme] = if (field.initializer != null) {
+                interpreter.evaluateInEnvironment(field.initializer, closure)
+            } else {
+                null
+            }
+        }
+
+        // 2. Positional arguments
+        for (i in arguments.indices) {
+            if (i < declaration.fields.size) {
+                val field = declaration.fields[i]
+                val value = arguments[i]
+                validateAndSetField(instance, field.name, value, interpreter)
+            }
+        }
+
+        // 3. Named arguments
+        for ((name, value) in namedArguments) {
+            val field = declaration.fields.find { it.name.lexeme == name }
+                ?: throw SakhrError.RuntimeError("البنية '${declaration.name.lexeme}' لا تحتوي على حقل باسم '$name'.", Location(0, 0))
+            validateAndSetField(instance, field.name, value, interpreter)
+        }
+
+        return instance
+    }
+
+    fun getFieldType(name: String): String? = fieldTypes[name]
+
+    private fun validateAndSetField(instance: SakhrInstance, fieldName: Token, value: Any?, interpreter: Interpreter) {
+        val name = fieldName.lexeme
+        val typeName = interpreter.getSakhrTypeName(value)
+
+        val expectedType = fieldTypes[name]
+        if (expectedType == null && value != null) {
+            // Late inference
+            fieldTypes[name] = typeName
+        }
+
+        if (expectedType != null && typeName != expectedType && value != null) {
+            throw SakhrError.RuntimeError(
+                "نوع الحقل '$name' هو '${expectedType}'، ولكن تم تمرير قيمة من نوع '$typeName'.",
+                fieldName.location
+            )
+        }
+
+        instance.fields[name] = value
+    }
+}
+
+class SakhrInstance(val struct: SakhrStruct) {
+    val fields = mutableMapOf<String, Any?>()
+    var isMutable = true
+
+    fun stringify(interpreter: Interpreter): String {
+        val fieldStr = fields.entries.joinToString("، ") { "${it.key}: ${interpreter.stringify(it.value)}" }
+        return "${struct.declaration.name.lexeme}($fieldStr)"
+    }
+
+    fun asImmutable(): SakhrInstance {
+        val new = SakhrInstance(struct)
+        new.fields.putAll(this.fields)
+        new.isMutable = false
+        return new
+    }
+}
+
 class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     val globals = Environment()
     private var environment = globals
@@ -50,15 +147,15 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     init {
         globals.define("أكتب", object : SakhrCallable {
             override fun arity(): Int = 1
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
-                println(stringify(arguments[0]))
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? {
+                println(interpreter.stringify(arguments[0]))
                 return null
             }
         }, true)
 
         globals.define("إنهاء_البرنامج", object : SakhrCallable {
             override fun arity(): Int = 1
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? {
                 val code = (arguments[0] as? Double)?.toInt() ?: 0
                 exitProcess(code)
             }
@@ -66,12 +163,12 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
 
         globals.define("اقرأ", object : SakhrCallable {
             override fun arity(): Int = 0
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? = readlnOrNull()
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? = readlnOrNull()
         }, true)
 
         globals.define("رقم", object : SakhrCallable {
             override fun arity(): Int = 1
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any {
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any {
                 val arg = arguments[0]
                 if (arg is Double) return arg
                 if (arg is Boolean) return if (arg) 1.0 else 0.0
@@ -81,36 +178,36 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         Location(0, 0)
                     )
                 }
-                throw SakhrError.RuntimeError("لا يمكن تحويل النوع ${getSakhrTypeName(arg)} إلى رقم.", Location(0, 0))
+                throw SakhrError.RuntimeError("لا يمكن تحويل النوع ${interpreter.getSakhrTypeName(arg)} إلى رقم.", Location(0, 0))
             }
         }, true)
 
         globals.define("نص", object : SakhrCallable {
             override fun arity(): Int = 1
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any = stringify(arguments[0])
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any = interpreter.stringify(arguments[0])
         }, true)
 
         globals.define("منطقي", object : SakhrCallable {
             override fun arity(): Int = 1
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any = isTruthy(arguments[0])
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any = interpreter.isTruthy(arguments[0])
         }, true)
 
         // Built-in extension methods
-        defineBuiltInExtension("رقم", "نص", 0) { _, _, context -> stringify(context) }
-        defineBuiltInExtension("منطقي", "نص", 0) { _, _, context -> stringify(context) }
-        defineBuiltInExtension("نص", "نص", 0) { _, _, context -> stringify(context) }
-        defineBuiltInExtension("قائمة", "نص", 0) { _, _, context -> stringify(context) }
+        defineBuiltInExtension("رقم", "نص", 0) { _, _, _, context -> stringify(context) }
+        defineBuiltInExtension("منطقي", "نص", 0) { _, _, _, context -> stringify(context) }
+        defineBuiltInExtension("نص", "نص", 0) { _, _, _, context -> stringify(context) }
+        defineBuiltInExtension("قائمة", "نص", 0) { _, _, _, context -> stringify(context) }
 
-        defineBuiltInExtension("نص", "طول", 0) { _, _, context -> (context as String).length.toDouble() }
-        defineBuiltInExtension("قائمة", "حجم", 0) { _, _, context -> (context as List<*>).size.toDouble() }
+        defineBuiltInExtension("نص", "طول", 0) { _, _, _, context -> (context as String).length.toDouble() }
+        defineBuiltInExtension("قائمة", "حجم", 0) { _, _, _, context -> (context as List<*>).size.toDouble() }
 
-        defineBuiltInExtension("قائمة", "أضف", 1) { _, args, context ->
+        defineBuiltInExtension("قائمة", "أضف", 1) { _, args, _, context ->
             @Suppress("UNCHECKED_CAST")
             (context as MutableList<Any?>).add(args[0])
             null
         }
 
-        defineBuiltInExtension("قائمة", "أزل", 1) { _, args, context ->
+        defineBuiltInExtension("قائمة", "أزل", 1) { _, args, _, context ->
             @Suppress("UNCHECKED_CAST")
             val list = context as MutableList<Any?>
             val arg = args[0]
@@ -125,12 +222,29 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             null
         }
 
-        defineBuiltInExtension("قائمة", "أدخل", 2) { _, args, context ->
+        defineBuiltInExtension("قائمة", "أدخل", 2) { _, args, _, context ->
             @Suppress("UNCHECKED_CAST")
             val list = context as MutableList<Any?>
             val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", Location(0, 0))
             if (index in 0..list.size) {
                 list.add(index, args[1])
+            }
+            null
+        }
+
+        defineBuiltInExtension("قائمة", "فهرس", 1) { _, args, _, context ->
+            val list = context as List<Any?>
+            list.indexOf(args[0]).toDouble()
+        }
+
+        defineBuiltInExtension("قائمة", "استبدل", 2) { _, args, _, context ->
+            @Suppress("UNCHECKED_CAST")
+            val list = context as MutableList<Any?>
+            val index = (args[0] as? Double)?.toInt() ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", Location(0, 0))
+            if (index in list.indices) {
+                list[index] = args[1]
+            } else {
+                throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", Location(0, 0))
             }
             null
         }
@@ -140,18 +254,19 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         typeName: String,
         methodName: String,
         arity: Int,
-        call: (Interpreter, List<Any?>, Any?) -> Any?
+        call: (Interpreter, List<Any?>, Map<String, Any?>, Any?) -> Any?
     ) {
         globals.define("${typeName}::${methodName}", object : SakhrExtension {
             override fun arity(): Int = arity
-            override fun call(interpreter: Interpreter, arguments: List<Any?>): Any =
+            override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any =
                 throw SakhrError.RuntimeError("لا يمكن استدعاء الدالة الممتدة '${methodName}' مباشرة.", Location(0, 0))
 
             override fun callWithContext(
                 interpreter: Interpreter,
                 arguments: List<Any?>,
+                namedArguments: Map<String, Any?>,
                 context: Any?
-            ): Any? = call(interpreter, arguments, context)
+            ): Any? = call(interpreter, arguments, namedArguments, context)
         }, true)
     }
 
@@ -174,8 +289,12 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 if (stmt.receiverType != null) {
                     globals.define("${stmt.receiverType.lexeme}::${stmt.name.lexeme}", function, true)
                 } else {
-                    globals.define(stmt.name.lexeme, function, true)
+                    environment.define(stmt.name.lexeme, function, true)
                 }
+            }
+            is Stmt.Struct -> {
+                val struct = SakhrStruct(stmt, environment)
+                environment.define(stmt.name.lexeme, struct, true)
             }
             is Stmt.If -> {
                 if (isTruthy(evaluate(stmt.condition))) {
@@ -225,7 +344,13 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             }
             is Stmt.Const -> {
                 val value = evaluate(stmt.initializer)
-                environment.define(stmt.name.lexeme, value, true)
+                if (value is SakhrInstance) {
+                    // Force immutability for constants
+                    val immutableValue = value.asImmutable()
+                    environment.define(stmt.name.lexeme, immutableValue, true)
+                } else {
+                    environment.define(stmt.name.lexeme, value, true)
+                }
             }
             is Stmt.Return -> {
                 val value = stmt.value?.let { evaluate(it) }
@@ -246,7 +371,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         }
     }
 
-    private fun evaluate(expr: Expr): Any? {
+    fun evaluate(expr: Expr): Any? {
         return when (expr) {
             is Expr.Binary -> {
                 val left = evaluate(expr.left)
@@ -314,22 +439,57 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             }
             is Expr.ListLiteral -> expr.elements.map { evaluate(it) }.toMutableList()
 
+            is Expr.Index -> {
+                val obj = evaluate(expr.obj)
+                val indexDouble = evaluate(expr.index) as? Double ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس رقماً.", expr.bracket.location)
+                val index = indexDouble.toInt()
+                
+                if (obj !is List<*>) {
+                    throw SakhrError.RuntimeError("لا يمكن استخدام الفهرسة إلا مع القوائم.", expr.bracket.location)
+                }
+                
+                if (index < 0 || index >= obj.size) {
+                    throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق المسموح به؛ حجم القائمة هو ${obj.size}.", expr.bracket.location)
+                }
+                
+                val result = obj[index]
+                if (result is SakhrInstance) return result.asImmutable()
+                result
+            }
+
             is Expr.Call -> {
                 val callee = evaluate(expr.callee)
-                val arguments = expr.arguments.map { evaluate(it) }
+                
+                val arguments = mutableListOf<Any?>()
+                val namedArguments = mutableMapOf<String, Any?>()
+                
+                for (argExpr in expr.arguments) {
+                    if (argExpr is Expr.Assignment) {
+                        namedArguments[argExpr.name.lexeme] = evaluate(argExpr.value)
+                    } else {
+                        arguments.add(evaluate(argExpr))
+                    }
+                }
 
                 if (callee !is SakhrCallable) {
                     throw SakhrError.RuntimeError("يُسمح باستدعاء الدوال فقط.", expr.paren.location)
                 }
 
-                if (arguments.size != callee.arity()) {
-                    throw SakhrError.RuntimeError("تتوقع الدالة ${callee.arity()} من الوسائط، ولكن تم تمرير ${arguments.size}.", expr.paren.location)
+                if (callee !is SakhrStruct && (arguments.size + namedArguments.size) != callee.arity()) {
+                    throw SakhrError.RuntimeError("تتوقع الدالة ${callee.arity()} من الوسائط، ولكن تم تمرير ${arguments.size + namedArguments.size}.", expr.paren.location)
                 }
 
-                callee.call(this, arguments)
+                callee.call(this, arguments, namedArguments)
             }
             is Expr.Get -> {
                 val obj = evaluate(expr.obj)
+                
+                if (obj is SakhrInstance) {
+                    if (obj.fields.containsKey(expr.name.lexeme)) {
+                        return obj.fields[expr.name.lexeme]
+                    }
+                }
+
                 val typeName = getSakhrTypeName(obj)
                 val methodName = expr.name.lexeme
                 
@@ -337,15 +497,15 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 if (function is SakhrExtension) {
                     return object : SakhrCallable {
                         override fun arity(): Int = function.arity()
-                        override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? =
-                            function.callWithContext(interpreter, arguments, obj)
+                        override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? =
+                            function.callWithContext(interpreter, arguments, namedArguments, obj)
                     }
                 }
 
                 if (obj is List<*> && methodName == "خذ") {
                      return object : SakhrCallable {
                          override fun arity() = 1
-                         override fun call(interpreter: Interpreter, arguments: List<Any?>): Any? {
+                         override fun call(interpreter: Interpreter, arguments: List<Any?>, namedArguments: Map<String, Any?>): Any? {
                              val indexDouble = arguments[0] as? Double ?: throw SakhrError.RuntimeError("يجب أن يكون الفهرس من النوع 'رقم'.", expr.name.location)
                              val index = indexDouble.toInt()
                              if (index < 0 || index >= obj.size) {
@@ -355,12 +515,43 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                                      if (obj.isEmpty()) "القائمة فارغة، لا يمكنك استخدام 'خذ' هنا." else "استخدم فهرساً بين 0 و ${obj.size - 1}."
                                  )
                              }
-                             return obj[index]
+                             val result = obj[index]
+                             if (result is SakhrInstance) return result.asImmutable()
+                             return result
                          }
                      }
                 }
 
-                throw SakhrError.RuntimeError("تعذر العثور على الدالة الممتدة '${methodName}' للنوع '${typeName}'.", expr.name.location)
+                throw SakhrError.RuntimeError("تعذر العثور على الحقل أو الدالة الممتدة '${methodName}' للنوع '${typeName}'.", expr.name.location)
+            }
+            is Expr.Set -> {
+                val obj = evaluate(expr.obj)
+                if (obj !is SakhrInstance) {
+                    throw SakhrError.RuntimeError("لا يمكن التعيين إلا لحقول بنية.", expr.name.location)
+                }
+                
+                if (!obj.isMutable) {
+                    throw SakhrError.RuntimeError(
+                        "لا يمكن تعديل الحقل '${expr.name.lexeme}' لأن الكائنات المستخرجة من القوائم ثابتة (غير قابلة للتغيير). يُنصح باستخدام الدالة 'استبدل(الفهرس، القيمة_الجديدة)' لتحديث القائمة بدلاً من ذلك.",
+                        expr.name.location
+                    )
+                }
+
+                if (!obj.fields.containsKey(expr.name.lexeme)) {
+                    throw SakhrError.RuntimeError("البنية '${obj.struct.declaration.name.lexeme}' لا تحتوي على حقل باسم '${expr.name.lexeme}'.", expr.name.location)
+                }
+
+                val value = evaluate(expr.value)
+                
+                // Validate type
+                val typeName = getSakhrTypeName(value)
+                val expectedType = obj.struct.getFieldType(expr.name.lexeme)
+                if (expectedType != null && typeName != expectedType && value != null) {
+                    throw SakhrError.RuntimeError("نوع الحقل '${expr.name.lexeme}' هو '$expectedType'، ولكن تم تعيين قيمة من نوع '$typeName'.", expr.name.location)
+                }
+
+                obj.fields[expr.name.lexeme] = value
+                value
             }
             is Expr.Grouping -> evaluate(expr.expression)
             is Expr.Literal -> expr.value
@@ -374,7 +565,17 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         }
     }
 
-    private fun stringify(obj: Any?): String {
+    fun evaluateInEnvironment(expr: Expr, environment: Environment): Any? {
+        val previous = this.environment
+        try {
+            this.environment = environment
+            return evaluate(expr)
+        } finally {
+            this.environment = previous
+        }
+    }
+
+    fun stringify(obj: Any?): String {
         if (obj == null) return "عدم"
         if (obj is Boolean) return if (obj) "صح" else "خطأ"
         if (obj is Double) {
@@ -387,20 +588,24 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         if (obj is List<*>) {
             return obj.joinToString(prefix = "[", postfix = "]", separator = "، ") { stringify(it) }
         }
+        if (obj is SakhrInstance) {
+            return obj.stringify(this)
+        }
         return obj.toString()
     }
 
-    private fun getSakhrTypeName(obj: Any?): String {
+    fun getSakhrTypeName(obj: Any?): String {
         return when (obj) {
             is String -> "نص"
             is Double -> "رقم"
             is Boolean -> "منطقي"
             is List<*> -> "قائمة"
+            is SakhrInstance -> obj.struct.declaration.name.lexeme
             else -> "عدم"
         }
     }
 
-    private fun isTruthy(obj: Any?): Boolean {
+    fun isTruthy(obj: Any?): Boolean {
         if (obj == null) return false
         if (obj is Boolean) return obj
         return true

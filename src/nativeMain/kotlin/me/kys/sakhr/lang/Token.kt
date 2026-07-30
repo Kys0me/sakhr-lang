@@ -22,6 +22,7 @@ enum class TokenType {
     OR,             // أو
     NOT,            // ليس
     NULL,           // عدم
+    STRUCT,         // بنية
     
     // Literals
     IDENTIFIER,
