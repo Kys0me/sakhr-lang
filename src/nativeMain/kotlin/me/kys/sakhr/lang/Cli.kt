@@ -42,7 +42,7 @@ class Cli {
 
     private fun help() {
         println("""
-لغة صخر (Sakhr) - مترجم ومفسر اللغة العربية
+لغة صخر - مترجم ومفسر اللغة العربية
 
 الاستخدام:
   صخر <الأمر> [خيارات]
@@ -50,7 +50,7 @@ class Cli {
 الأوامر:
   شغل <ملف> [وسائط]    تنفيذ ملف برمجي
   فحص <ملف>            التحقق من صحة الكود في ملف دون تنفيذه
-  تفاعل                بدء جلسة تفاعلية (REPL)
+  تفاعل                    بدء جلسة تفاعلية
   إصدار                عرض معلومات الإصدار
   مساعدة               عرض دليل المساعدة هذا
         """.trimIndent())
@@ -75,8 +75,10 @@ class Cli {
 
         if (diagnostics.hasErrors()) return
 
+        val optimized = Optimizer().optimize(statements)
+
         val interpreter = Interpreter(diagnostics)
-        interpreter.execute(statements)
+        interpreter.execute(optimized)
 
         val mainFunc = interpreter.globals.getRaw("المطلع")
         if (mainFunc is SakhrCallable) {
@@ -145,7 +147,7 @@ class Cli {
         typeChecker.check(statements)
         if (diagnostics.hasErrors()) return
 
-        interpreter.execute(statements)
+        interpreter.execute(Optimizer().optimize(statements))
     }
 
     @OptIn(ExperimentalForeignApi::class)

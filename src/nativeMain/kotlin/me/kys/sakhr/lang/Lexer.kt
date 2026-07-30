@@ -11,13 +11,22 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         "إجراء" to TokenType.PROCEDURE,
         "ليكن" to TokenType.LET,
         "ألزم" to TokenType.CONST,
-        "إن كان" to TokenType.IF, // Special case for spaces in keywords? No, usually keywords are single words.
+        "إن كان" to TokenType.IF, // Multi-word keyword, handled specially in identifier()
         "إذن" to TokenType.THEN,
         "وإلا" to TokenType.ELSE,
         "ابدأ" to TokenType.BEGIN,
         "انتهى" to TokenType.END,
         "السياق" to TokenType.CONTEXT,
-        "رجع" to TokenType.RETURN,
+        "رد" to TokenType.RETURN,
+        "كرر" to TokenType.REPEAT,
+        "لكل" to TokenType.FOR_EACH,
+        "في" to TokenType.IN,
+        "اكفف" to TokenType.BREAK,
+        "امض" to TokenType.CONTINUE,
+        "و" to TokenType.AND,
+        "أو" to TokenType.OR,
+        "ليس" to TokenType.NOT,
+        "عدم" to TokenType.NULL,
         "صح" to TokenType.BOOLEAN,
         "خطأ" to TokenType.BOOLEAN
     )
@@ -48,15 +57,35 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
                 if (match('=')) addToken(TokenType.EQUALS_EQUALS)
                 else addToken(TokenType.EQUALS)
             }
-            '<' -> addToken(TokenType.LESS)
-            '>' -> addToken(TokenType.GREATER)
-            '+' -> addToken(TokenType.PLUS)
-            '-' -> addToken(TokenType.MINUS)
-            '*' -> addToken(TokenType.STAR)
+            '<' -> {
+                if (match('=')) addToken(TokenType.LESS_EQUALS)
+                else addToken(TokenType.LESS)
+            }
+            '>' -> {
+                if (match('=')) addToken(TokenType.GREATER_EQUALS)
+                else addToken(TokenType.GREATER)
+            }
+            '+' -> {
+                if (match('=')) addToken(TokenType.PLUS_EQUALS)
+                else addToken(TokenType.PLUS)
+            }
+            '-' -> {
+                if (match('=')) addToken(TokenType.MINUS_EQUALS)
+                else addToken(TokenType.MINUS)
+            }
+            '*' -> {
+                if (match('=')) addToken(TokenType.STAR_EQUALS)
+                else addToken(TokenType.STAR)
+            }
+            '%' -> addToken(TokenType.PERCENT)
+            '[' -> addToken(TokenType.LEFT_BRACKET)
+            ']' -> addToken(TokenType.RIGHT_BRACKET)
             '/' -> {
                 if (match('/')) {
                     // A comment goes until the end of the line.
                     while (peek() != '\n' && !isAtEnd()) advance()
+                } else if (match('=')) {
+                    addToken(TokenType.SLASH_EQUALS)
                 } else {
                     addToken(TokenType.SLASH)
                 }
@@ -87,7 +116,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         while (isArabicAlphaNumeric(peek())) advance()
         
         val text = source.substring(start, current)
-        // Check for multi-word keywords like "إن كان"
+        // Check for multi-word keywords like "إن كان" or "ما دام"
         if (text == "إن" && peek() == ' ') {
             val potentialSpace = current
             if (source.substring(potentialSpace + 1).startsWith("كان") && 
@@ -95,6 +124,17 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
                 advance() // space
                 advance(); advance(); advance() // ك ا ن
                 addToken(TokenType.IF)
+                return
+            }
+        }
+        
+        if (text == "ما" && peek() == ' ') {
+            val potentialSpace = current
+            if (source.substring(potentialSpace + 1).startsWith("دام") &&
+                !isArabicAlphaNumeric(source.getOrElse(potentialSpace + 4) { '\u0000' })) {
+                advance() // space
+                advance(); advance(); advance() // د ا م
+                addToken(TokenType.WHILE)
                 return
             }
         }

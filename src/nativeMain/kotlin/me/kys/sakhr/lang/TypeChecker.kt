@@ -4,6 +4,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     private val scopes = mutableListOf<MutableMap<String, VariableInfo>>()
     private val functions = mutableMapOf<String, MutableList<FunctionSignature>>()
     private var currentFunction: FunctionSignature? = null
+    private var loopDepth = 0
 
     enum class FunctionKind { FUNCTION, EXTENSION }
     data class VariableInfo(val type: SakhrType, val isConstant: Boolean, val isDefined: Boolean)
@@ -23,6 +24,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         registerBuiltIn("أكتب", listOf(SakhrType.LIST), SakhrType.VOID)
 
         registerBuiltIn("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID)
+        registerBuiltIn("اقرأ", emptyList(), SakhrType.STRING)
+        registerBuiltIn("رقم", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER)
+        registerBuiltIn("نص", listOf(SakhrType.UNKNOWN), SakhrType.STRING)
+        registerBuiltIn("منطقي", listOf(SakhrType.UNKNOWN), SakhrType.BOOLEAN)
 
         // Extension methods
         registerExtension(SakhrType.NUMBER, "نص", emptyList(), SakhrType.STRING)
@@ -32,7 +37,11 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
         registerExtension(SakhrType.STRING, "طول", emptyList(), SakhrType.NUMBER)
         registerExtension(SakhrType.LIST, "حجم", emptyList(), SakhrType.NUMBER)
-        registerExtension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.NUMBER)
+        registerExtension(SakhrType.LIST, "أضف", listOf(SakhrType.UNKNOWN), SakhrType.VOID)
+        registerExtension(SakhrType.LIST, "أزل", listOf(SakhrType.UNKNOWN), SakhrType.VOID)
+        registerExtension(SakhrType.LIST, "أدخل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID)
+        // Element types are erased, so 'خذ' returns UNKNOWN (assignable to anything)
+        registerExtension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.UNKNOWN)
 
         beginScope() // Global scope
     }
@@ -133,9 +142,8 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
                 for (i in stmt.params.indices) {
                     val param = stmt.params[i]
-                    // Use sig.params[i] because it might have been updated by a call site 
-                    // (though in this simple checker, call sites are processed in the second pass along with the body)
-                    // Wait, if a call site is processed BEFORE the function body, sig.params[i] might be updated.
+                    // Use sig.params[i]: a call site processed earlier may have
+                    // inferred a concrete type for an untyped parameter.
                     declare(param.name, sig.params[i], isConstant = false)
                     define(param.name)
                 }
@@ -160,13 +168,74 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (condType != SakhrType.BOOLEAN && condType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "شرط 'إن كان' يجب أن يكون من نوع 'بولين'.",
+                            "شرط 'إن كان' يجب أن يكون من نوع 'منطقي'.",
                             getExprLocation(stmt.condition)
                         )
                     )
                 }
                 checkStmt(stmt.thenBranch)
                 stmt.elseBranch?.let { checkStmt(it) }
+            }
+
+            is Stmt.While -> {
+                val condType = checkExpr(stmt.condition)
+                if (condType != SakhrType.BOOLEAN && condType != SakhrType.UNKNOWN) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "شرط 'ما دام' يجب أن يكون من نوع 'منطقي'.",
+                            getExprLocation(stmt.condition)
+                        )
+                    )
+                }
+                loopDepth++
+                checkStmt(stmt.body)
+                loopDepth--
+            }
+
+            is Stmt.ForEach -> {
+                val iterableType = checkExpr(stmt.iterable)
+                if (iterableType != SakhrType.LIST && iterableType != SakhrType.UNKNOWN) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام 'لكل' إلا مع قائمة، لكن النوع المعطى هو '${iterableType.lexeme}'.",
+                            getExprLocation(stmt.iterable)
+                        )
+                    )
+                }
+                beginScope()
+                stmt.indexVar?.let {
+                    declare(it, SakhrType.NUMBER, isConstant = true)
+                    define(it)
+                }
+                // Element types are erased in lists, so the element is UNKNOWN
+                declare(stmt.elementVar, SakhrType.UNKNOWN, isConstant = true)
+                define(stmt.elementVar)
+                loopDepth++
+                checkStmt(stmt.body)
+                loopDepth--
+                endScope()
+            }
+
+            is Stmt.Break -> {
+                if (loopDepth == 0) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام 'اكفف' خارج حلقة تكرارية.",
+                            stmt.keyword.location
+                        )
+                    )
+                }
+            }
+
+            is Stmt.Continue -> {
+                if (loopDepth == 0) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام 'امض' خارج حلقة تكرارية.",
+                            stmt.keyword.location
+                        )
+                    )
+                }
             }
 
             is Stmt.Let -> {
@@ -217,7 +286,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (currentFunction == null) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام 'رجع' خارج الدالة.",
+                            "لا يمكن استخدام 'رد' خارج الدالة.",
                             stmt.keyword.location
                         )
                     )
@@ -311,6 +380,8 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     TokenType.PLUS -> {
                         if (leftType == SakhrType.STRING || rightType == SakhrType.STRING) return SakhrType.STRING
                         if (leftType == SakhrType.NUMBER && rightType == SakhrType.NUMBER) return SakhrType.NUMBER
+                        // Tolerate erased/unknown operands (e.g. list elements)
+                        if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.UNKNOWN
                         diagnostics.report(
                             SakhrError.TypeError(
                                 "العملية '+' غير مدعومة بين النوعين '${leftType.lexeme}' و '${rightType.lexeme}'.",
@@ -320,8 +391,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         SakhrType.UNKNOWN
                     }
 
-                    TokenType.MINUS, TokenType.STAR, TokenType.SLASH -> {
+                    TokenType.MINUS, TokenType.STAR, TokenType.SLASH, TokenType.PERCENT -> {
                         if (leftType == SakhrType.NUMBER && rightType == SakhrType.NUMBER) return SakhrType.NUMBER
+                        if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.NUMBER
                         diagnostics.report(
                             SakhrError.TypeError(
                                 "العملية '${expr.operator.lexeme}' تتطلب أرقاماً.",
@@ -331,8 +403,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         SakhrType.NUMBER
                     }
 
-                    TokenType.GREATER, TokenType.LESS -> {
+                    TokenType.GREATER, TokenType.GREATER_EQUALS,
+                    TokenType.LESS, TokenType.LESS_EQUALS -> {
                         if (leftType == SakhrType.NUMBER && rightType == SakhrType.NUMBER) return SakhrType.BOOLEAN
+                        if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.BOOLEAN
                         diagnostics.report(
                             SakhrError.TypeError(
                                 "عمليات المقارنة تتطلب أرقاماً.",
@@ -345,6 +419,55 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     TokenType.EQUALS_EQUALS, TokenType.BANG_EQUALS -> SakhrType.BOOLEAN
                     else -> SakhrType.UNKNOWN
                 }
+            }
+
+            is Expr.Logical -> {
+                val leftType = checkExpr(expr.left)
+                val rightType = checkExpr(expr.right)
+                if (leftType != SakhrType.BOOLEAN && leftType != SakhrType.UNKNOWN ||
+                    rightType != SakhrType.BOOLEAN && rightType != SakhrType.UNKNOWN
+                ) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "العملية المنطقية '${expr.operator.lexeme}' تتطلب قيماً منطقية.",
+                            expr.operator.location
+                        )
+                    )
+                }
+                SakhrType.BOOLEAN
+            }
+
+            is Expr.Unary -> {
+                val rightType = checkExpr(expr.right)
+                when (expr.operator.type) {
+                    TokenType.MINUS -> {
+                        if (rightType != SakhrType.NUMBER && rightType != SakhrType.UNKNOWN) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "العملية '-' تتطلب رقماً.",
+                                    expr.operator.location
+                                )
+                            )
+                        }
+                        SakhrType.NUMBER
+                    }
+                    else -> { // NOT
+                        if (rightType != SakhrType.BOOLEAN && rightType != SakhrType.UNKNOWN) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "العملية 'ليس' تتطلب قيمة منطقية.",
+                                    expr.operator.location
+                                )
+                            )
+                        }
+                        SakhrType.BOOLEAN
+                    }
+                }
+            }
+
+            is Expr.ListLiteral -> {
+                expr.elements.forEach { checkExpr(it) }
+                SakhrType.LIST
             }
 
             is Expr.Call -> {
@@ -432,10 +555,20 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         }
         
         if (sig != null) {
+            var modified = false
+            val newParams = sig.params.toMutableList()
             for (i in sig.params.indices) {
                 if (sig.params[i] == SakhrType.UNKNOWN && argTypes[i] != SakhrType.UNKNOWN) {
-                    sig.params[i] = argTypes[i]
+                    newParams[i] = argTypes[i]
+                    modified = true
                 }
+            }
+            if (modified) {
+                // If it's a global built-in or extension, we don't want to permanently mutate it
+                // unless it's a user function where we are inferring types.
+                // For simplicity, we only mutate if it's NOT a built-in (already in functions before check())
+                // Actually, a better way is to check if it's the first pass collection.
+                return sig.copy(params = newParams)
             }
         }
         return sig
@@ -508,6 +641,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         return when (expr) {
             is Expr.Variable -> expr.name.location
             is Expr.Binary -> expr.operator.location
+            is Expr.Logical -> expr.operator.location
+            is Expr.Unary -> expr.operator.location
+            is Expr.ListLiteral -> expr.bracket.location
             is Expr.Call -> expr.paren.location
             is Expr.Get -> expr.name.location
             is Expr.Assignment -> expr.name.location
