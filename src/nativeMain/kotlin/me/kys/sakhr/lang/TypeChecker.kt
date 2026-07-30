@@ -114,8 +114,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (sigs.any { it.params == sig.params && it.returnType == sig.returnType }) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "تم تعريف الدالة '${stmt.name.lexeme}' بنفس المواصفات مسبقاً في هذا النطاق.",
-                            stmt.name.location
+                            "توجد دالة أخرى بالاسم '${stmt.name.lexeme}' وبنفس الوسائط والنوع الراجع في هذا النطاق.",
+                            stmt.name.location,
+                            suggestion = "غيّر اسم الدالة، أو عدّل أنواع وسائطها لتمييزها عن التعريف السابق.",
+                            length = stmt.name.lexeme.length
                         )
                     )
                 } else {
@@ -135,8 +137,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (scope.structs.containsKey(stmt.name.lexeme)) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "تم تعريف البنية '${stmt.name.lexeme}' مسبقاً في هذا النطاق.",
-                            stmt.name.location
+                            "توجد بنية أخرى بالاسم '${stmt.name.lexeme}' في هذا النطاق.",
+                            stmt.name.location,
+                            suggestion = "اختر اسماً مختلفاً للبنية الجديدة، أو احذف التعريف المكرر.",
+                            length = stmt.name.lexeme.length
                         )
                     )
                 } else {
@@ -169,8 +173,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (param.defaultValue != null) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "لا يمكن تحديد قيم افتراضية لوسائط دالة 'المطلع'.",
-                                    param.name.location
+                                    "دالة 'المطلع' لا تقبل وسائط بقيم افتراضية لأنها تستقبل وسائط التشغيل مباشرة.",
+                                    param.name.location,
+                                    suggestion = "احذف القيمة الافتراضية من الوسيط '${param.name.lexeme}'.",
+                                    length = param.name.lexeme.length
                                 )
                             )
                         }
@@ -186,8 +192,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                             if (defaultType == SakhrType.NULL_LITERAL) {
                                 diagnostics.report(
                                     SakhrError.TypeError(
-                                        "يجب تحديد نوع الوسيط '${p.name.lexeme}' صراحة عند جعل قيمته الافتراضية 'فارغ'.",
-                                        p.name.location
+                                        "تعذر استنتاج نوع الوسيط '${p.name.lexeme}' لأن قيمته الافتراضية 'فارغ'.",
+                                        p.name.location,
+                                        suggestion = "حدد نوع الوسيط صراحة، مثال: ${p.name.lexeme}: نص؟",
+                                        length = p.name.lexeme.length
                                     )
                                 )
                             }
@@ -202,7 +210,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                             if (!isAssignable(declaredType, defaultType)) {
                                 diagnostics.report(
                                     SakhrError.TypeError(
-                                        "نوع القيمة الافتراضية '${defaultType.lexeme}' لا يتوافق مع نوع الوسيط '${declaredType.lexeme}'.",
+                                        "القيمة الافتراضية من نوع '${defaultType.lexeme}'، وهذا لا يتوافق مع نوع الوسيط المعلن '${declaredType.lexeme}'.",
                                         getExprLocation(p.defaultValue)
                                     )
                                 )
@@ -258,8 +266,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (sig.returnType != SakhrType.VOID && !returnsOnAllPaths(stmt.body)) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "الدالة '${sig.name}' يجب أن تعيد قيمة من نوع '${sig.returnType.lexeme}'.",
-                            stmt.name.location
+                            "لا تعيد الدالة '${sig.name}' قيمة في جميع المسارات، رغم أن نوعها الراجع هو '${sig.returnType.lexeme}'.",
+                            stmt.name.location,
+                            suggestion = "أضف 'رد' بقيمة مناسبة في نهاية الدالة وفي كل فرع من فروع 'إن كان'.",
+                            length = sig.name.length
                         )
                     )
                 }
@@ -273,8 +283,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (condType != SakhrType.BOOLEAN && condType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "شرط 'إن كان' يجب أن يكون من نوع 'منطقي'.",
-                            getExprLocation(stmt.condition)
+                            "شرط 'إن كان' يجب أن يكون قيمة منطقية (صح أو خطأ)، لكن نوعه هنا '${condType.lexeme}'.",
+                            getExprLocation(stmt.condition),
+                            suggestion = "استخدم مقارنة تنتج قيمة منطقية، مثال: إن كان (العدد > 0)"
                         )
                     )
                 }
@@ -287,8 +298,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (condType != SakhrType.BOOLEAN && condType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "شرط 'ما دام' يجب أن يكون من نوع 'منطقي'.",
-                            getExprLocation(stmt.condition)
+                            "شرط 'ما دام' يجب أن يكون قيمة منطقية (صح أو خطأ)، لكن نوعه هنا '${condType.lexeme}'.",
+                            getExprLocation(stmt.condition),
+                            suggestion = "استخدم مقارنة تنتج قيمة منطقية، مثال: ما دام (العدد < 10)"
                         )
                     )
                 }
@@ -302,7 +314,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (iterableType != SakhrType.LIST && iterableType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام 'لكل' إلا مع قائمة، لكن النوع المعطى هو '${iterableType.lexeme}'.",
+                            "حلقة 'لكل' تكرر على عناصر قائمة فقط، والنوع المعطى هنا '${iterableType.lexeme}'.",
                             getExprLocation(stmt.iterable)
                         )
                     )
@@ -325,8 +337,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (loopDepth == 0) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام 'اكفف' خارج حلقة تكرارية.",
-                            stmt.keyword.location
+                            "الكلمة 'اكفف' توقف الحلقة، ولا يمكن استخدامها خارج حلقة 'ما دام' أو 'لكل'.",
+                            stmt.keyword.location,
+                            length = stmt.keyword.lexeme.length
                         )
                     )
                 }
@@ -336,8 +349,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (loopDepth == 0) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام 'امض' خارج حلقة تكرارية.",
-                            stmt.keyword.location
+                            "الكلمة 'امض' تنتقل إلى الدورة التالية، ولا يمكن استخدامها خارج حلقة 'ما دام' أو 'لكل'.",
+                            stmt.keyword.location,
+                            length = stmt.keyword.lexeme.length
                         )
                     )
                 }
@@ -351,7 +365,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     // For destructuring, we usually don't have an explicit type for the whole thing.
                     // If we do, it's tricky. For now, we allow it if no explicit type is provided.
                     if (explicitType != null) {
-                         diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند استخدام التفكيك (تعيين عدة متغيرات).", stmt.names[0].location))
+                         diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند تفكيك قيمة إلى عدة متغيرات.", stmt.names[0].location, suggestion = "احذف النوع الصريح؛ تُستنتج أنواع المتغيرات تلقائياً عند التفكيك."))
                     }
                     
                     for (name in stmt.names) {
@@ -363,8 +377,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "يجب تحديد نوع المتغير '${nameToken.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
-                                nameToken.location
+                                "تعذر استنتاج نوع المتغير '${nameToken.lexeme}' لأن قيمته الابتدائية 'فارغ'.",
+                                nameToken.location,
+                                suggestion = "حدد نوع المتغير صراحة، مثال: ليكن ${nameToken.lexeme}: نص؟ = فارغ",
+                                length = nameToken.lexeme.length
                             )
                         )
                     }
@@ -373,8 +389,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (stmt.initializer != null && !isAssignable(explicitType, initType)) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لمتغير معرف كـ '${explicitType.lexeme}'.",
-                                    nameToken.location
+                                    "لا يمكن إسناد قيمة من نوع '${initType.lexeme}' إلى المتغير '${nameToken.lexeme}' المعرف بنوع '${explicitType.lexeme}'.",
+                                    nameToken.location,
+                                    length = nameToken.lexeme.length
                                 )
                             )
                         }
@@ -394,7 +411,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 
                 if (stmt.names.size > 1) {
                     if (explicitType != null) {
-                        diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند استخدام التفكيك (تعيين عدة ثوابت).", stmt.names[0].location))
+                        diagnostics.report(SakhrError.TypeError("لا يمكن تحديد نوع صريح عند تفكيك قيمة إلى عدة ثوابت.", stmt.names[0].location, suggestion = "احذف النوع الصريح؛ تُستنتج أنواع الثوابت تلقائياً عند التفكيك."))
                     }
                     for (name in stmt.names) {
                         declare(name, SakhrType.UNKNOWN, isConstant = true)
@@ -405,8 +422,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "يجب تحديد نوع الثابت '${nameToken.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
-                                nameToken.location
+                                "تعذر استنتاج نوع الثابت '${nameToken.lexeme}' لأن قيمته الابتدائية 'فارغ'.",
+                                nameToken.location,
+                                suggestion = "حدد نوع الثابت صراحة، مثال: ألزم ${nameToken.lexeme}: نص؟ = فارغ",
+                                length = nameToken.lexeme.length
                             )
                         )
                     }
@@ -415,8 +434,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (!isAssignable(explicitType, initType)) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "لا يمكن تعيين قيمة من نوع '${initType.lexeme}' لثابت معرف كـ '${explicitType.lexeme}'.",
-                                    nameToken.location
+                                    "لا يمكن إسناد قيمة من نوع '${initType.lexeme}' إلى الثابت '${nameToken.lexeme}' المعرف بنوع '${explicitType.lexeme}'.",
+                                    nameToken.location,
+                                    length = nameToken.lexeme.length
                                 )
                             )
                         }
@@ -434,8 +454,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (currentFunction == null) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام 'رد' خارج الدالة.",
-                            stmt.keyword.location
+                            "الكلمة 'رد' تعيد قيمة من دالة، ولا يمكن استخدامها خارج دالة.",
+                            stmt.keyword.location,
+                            length = stmt.keyword.lexeme.length
                         )
                     )
                 }
@@ -443,8 +464,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (currentFunction != null && !isAssignable(currentFunction!!.returnType, valueType)) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "نوع الراجع '${valueType.lexeme}' لا يتطابق مع نوع إرجاع الدالة '${currentFunction!!.returnType.lexeme}'.",
-                            stmt.keyword.location
+                            "قيمة 'رد' من نوع '${valueType.lexeme}'، وهذا لا يطابق النوع الراجع للدالة '${currentFunction!!.returnType.lexeme}'.",
+                            stmt.keyword.location,
+                            length = stmt.keyword.lexeme.length
                         )
                     )
                 }
@@ -486,11 +508,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     
                     val allVariables = scopes.flatMap { it.variables.keys }
                     val suggestion = DiagnosticEngine.findClosest(expr.name.lexeme, allVariables)
-                    val msg = if (suggestion != null) "المتغير '${expr.name.lexeme}' غير معرف؛ هل قصدت '$suggestion'؟" 
-                             else "المتغير '${expr.name.lexeme}' غير معرف في هذا النطاق."
-                    
                     diagnostics.report(
-                        SakhrError.TypeError(msg, expr.name.location)
+                        SakhrError.TypeError(
+                            "المتغير '${expr.name.lexeme}' غير معرف في هذا النطاق.",
+                            expr.name.location,
+                            suggestion = suggestion?.let { "هل قصدت '$it'؟" }
+                                ?: "عرّف المتغير قبل استخدامه، مثال: ليكن ${expr.name.lexeme} = ...",
+                            length = expr.name.lexeme.length
+                        )
                     )
                     return SakhrType.UNKNOWN
                 }
@@ -509,26 +534,34 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val valueType = checkExpr(expr.value)
                 val info = lookupVariable(expr.name)
                 if (info == null) {
+                    val allVariables = scopes.flatMap { it.variables.keys }
+                    val suggestion = DiagnosticEngine.findClosest(expr.name.lexeme, allVariables)
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "المتغير '${expr.name.lexeme}' غير معرف.",
-                            expr.name.location
+                            "لا يمكن التعيين للمتغير '${expr.name.lexeme}' لأنه غير معرف.",
+                            expr.name.location,
+                            suggestion = suggestion?.let { "هل قصدت '$it'؟" }
+                                ?: "عرّف المتغير أولاً بـ'ليكن' قبل إسناد قيمة إليه.",
+                            length = expr.name.lexeme.length
                         )
                     )
                 } else {
                     if (info.isConstant) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا يمكن إعادة تعيين قيمة لـ '${expr.name.lexeme}' لأنه معرف كـ 'ألزم'.",
-                                expr.name.location
+                                "لا يمكن تغيير قيمة '${expr.name.lexeme}' لأنه ثابت معرف بـ'ألزم'.",
+                                expr.name.location,
+                                suggestion = "إذا كنت تحتاج إلى تغيير قيمته، عرّفه بـ'ليكن' بدلاً من 'ألزم'.",
+                                length = expr.name.lexeme.length
                             )
                         )
                     }
                     if (!isAssignable(info.type, valueType)) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا يمكن تعيين قيمة من نوع '${valueType.lexeme}' لمتغير من نوع '${info.type.lexeme}'.",
-                                expr.name.location
+                                "لا يمكن إسناد قيمة من نوع '${valueType.lexeme}' إلى المتغير '${expr.name.lexeme}' المعرف بنوع '${info.type.lexeme}'.",
+                                expr.name.location,
+                                length = expr.name.lexeme.length
                             )
                         )
                     }
@@ -549,8 +582,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.UNKNOWN
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "العملية '+' غير مدعومة بين النوعين '${leftType.lexeme}' و '${rightType.lexeme}'.",
-                                expr.operator.location
+                                "لا يمكن تطبيق العملية '+' بين قيمة من نوع '${leftType.lexeme}' وأخرى من نوع '${rightType.lexeme}'.",
+                                expr.operator.location,
+                                suggestion = "العملية '+' تجمع الأرقام أو تدمج النصوص؛ تأكد من توافق نوعي الطرفين.",
+                                length = expr.operator.lexeme.length
                             )
                         )
                         SakhrType.UNKNOWN
@@ -561,8 +596,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.NUMBER
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "العملية '${expr.operator.lexeme}' تتطلب أرقاماً.",
-                                expr.operator.location
+                                "العملية '${expr.operator.lexeme}' تعمل مع الأرقام فقط، وأحد الطرفين من نوع '${if (leftType != SakhrType.NUMBER) leftType.lexeme else rightType.lexeme}'.",
+                                expr.operator.location,
+                                length = expr.operator.lexeme.length
                             )
                         )
                         SakhrType.NUMBER
@@ -574,8 +610,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (leftType == SakhrType.UNKNOWN || rightType == SakhrType.UNKNOWN) return SakhrType.BOOLEAN
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "عمليات المقارنة تتطلب أرقاماً.",
-                                expr.operator.location
+                                "عمليات المقارنة (أكبر/أصغر) تعمل مع الأرقام فقط، والطرفان هنا من نوع '${leftType.lexeme}' و'${rightType.lexeme}'.",
+                                expr.operator.location,
+                                length = expr.operator.lexeme.length
                             )
                         )
                         SakhrType.BOOLEAN
@@ -594,8 +631,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 ) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "العملية المنطقية '${expr.operator.lexeme}' تتطلب قيماً منطقية.",
-                            expr.operator.location
+                            "العملية المنطقية '${expr.operator.lexeme}' تعمل مع القيم المنطقية (صح أو خطأ) فقط.",
+                            expr.operator.location,
+                            length = expr.operator.lexeme.length
                         )
                     )
                 }
@@ -609,8 +647,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (rightType != SakhrType.NUMBER && rightType != SakhrType.UNKNOWN) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "العملية '-' تتطلب رقماً.",
-                                    expr.operator.location
+                                    "علامة السالب '-' تعمل مع الأرقام فقط، والقيمة هنا من نوع '${rightType.lexeme}'.",
+                                    expr.operator.location,
+                                    length = expr.operator.lexeme.length
                                 )
                             )
                         }
@@ -620,8 +659,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (rightType != SakhrType.BOOLEAN && rightType != SakhrType.UNKNOWN) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "العملية 'ليس' تتطلب قيمة منطقية.",
-                                    expr.operator.location
+                                    "النفي 'ليس' يعمل مع القيم المنطقية (صح أو خطأ) فقط، والقيمة هنا من نوع '${rightType.lexeme}'.",
+                                    expr.operator.location,
+                                    length = expr.operator.lexeme.length
                                 )
                             )
                         }
@@ -642,11 +682,11 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val indexType = checkExpr(expr.index)
                 
                 if (indexType != SakhrType.NUMBER && indexType != SakhrType.UNKNOWN) {
-                    diagnostics.report(SakhrError.TypeError("يجب أن يكون الفهرس رقماً.", expr.bracket.location))
+                    diagnostics.report(SakhrError.TypeError("فهرس القائمة يجب أن يكون رقماً، والنوع المعطى هنا '${indexType.lexeme}'.", expr.bracket.location))
                 }
                 
                 if (objType.lexeme != "قائمة" && objType != SakhrType.UNKNOWN) {
-                    diagnostics.report(SakhrError.TypeError("لا يمكن استخدام الفهرسة إلا مع القوائم.", expr.bracket.location))
+                    diagnostics.report(SakhrError.TypeError("الفهرسة بالأقواس [] تُستخدم مع القوائم فقط، والنوع هنا '${objType.lexeme}'.", expr.bracket.location))
                 }
                 
                 objType.elementType ?: SakhrType.UNKNOWN
@@ -654,12 +694,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
             is Expr.Call -> {
                 val namedArgTypes = mutableMapOf<String, SakhrType>()
+                val namedArgLocations = mutableMapOf<String, Location>()
                 val positionalArgTypes = mutableListOf<SakhrType>()
                 
                 for (argExpr in expr.arguments) {
                     if (argExpr is Expr.Assignment) {
                         val type = checkExpr(argExpr.value)
                         namedArgTypes[argExpr.name.lexeme] = type
+                        namedArgLocations[argExpr.name.lexeme] = argExpr.name.location
                     } else {
                         val type = checkExpr(argExpr)
                         positionalArgTypes.add(type)
@@ -673,7 +715,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     // Check if it's a Struct constructor
                     val struct = lookupStruct(name)
                     if (struct != null) {
-                        return validateStructCall(struct, positionalArgTypes, namedArgTypes, expr.paren.location)
+                        return validateStructCall(struct, positionalArgTypes, namedArgTypes, expr.paren.location, namedArgLocations)
                     }
 
                     val sig = resolveAndCapture(name, positionalArgTypes, namedArgTypes)
@@ -684,8 +726,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         val totalArgs = positionalArgTypes.size + namedArgTypes.size
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا توجد نسخة من الدالة '$name' تطابق هذه الوسائط ($totalArgs وسائط).",
-                                expr.paren.location
+                                "لا توجد نسخة من الدالة '$name' تقبل هذه الوسائط ($totalArgs وسائط).",
+                                expr.paren.location,
+                                suggestion = "تأكد من عدد الوسائط وأنواعها، ومن مطابقتها لأحد تعريفات الدالة."
                             )
                         )
                         return SakhrType.UNKNOWN
@@ -710,8 +753,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (sig == null) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "النوع '${objType.lexeme}' لا يحتوي على دالة ممتدة باسم '${methodName}' تطابق هذه الوسائط.",
-                                expr.callee.name.location
+                                "لا توجد دالة ممتدة بالاسم '${methodName}' للنوع '${objType.lexeme}' تقبل هذه الوسائط.",
+                                expr.callee.name.location,
+                                length = methodName.length
                             )
                         )
                         return SakhrType.UNKNOWN
@@ -728,14 +772,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 // Check if the type itself is a struct (constructor)
                 val struct = lookupStruct(calleeType.lexeme)
                 if (struct != null) {
-                    return validateStructCall(struct, positionalArgTypes, namedArgTypes, expr.paren.location)
+                    return validateStructCall(struct, positionalArgTypes, namedArgTypes, expr.paren.location, namedArgLocations)
                 }
 
                 if (calleeType == SakhrType.UNKNOWN) return SakhrType.UNKNOWN
 
                 diagnostics.report(
                     SakhrError.TypeError(
-                        "النوع '${calleeType.lexeme}' غير قابل للاستدعاء.",
+                        "لا يمكن استدعاء قيمة من نوع '${calleeType.lexeme}'؛ الاستدعاء ممكن للدوال ومنشئات البنى فقط.",
                         getExprLocation(expr.callee)
                     )
                 )
@@ -759,10 +803,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     return SakhrType.UNKNOWN // Function/Method reference
                 }
 
+                val fieldNames = struct?.fields?.keys ?: emptySet()
+                val suggestion = DiagnosticEngine.findClosest(propertyName, fieldNames)
                 diagnostics.report(
                     SakhrError.TypeError(
-                        "النوع '${objType.lexeme}' لا يحتوي على خاصية باسم '${propertyName}'.",
-                        expr.name.location
+                        "النوع '${objType.lexeme}' لا يحتوي على خاصية أو دالة ممتدة باسم '${propertyName}'.",
+                        expr.name.location,
+                        suggestion = suggestion?.let { "هل قصدت '$it'؟" },
+                        length = propertyName.length
                     )
                 )
                 SakhrType.UNKNOWN
@@ -779,8 +827,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (info != null && info.isConstant) {
                         diagnostics.report(
                             SakhrError.TypeError(
-                                "لا يمكن تعديل حقل في كائن معرف كـ 'ألزم'.",
-                                expr.name.location
+                                "لا يمكن تعديل حقل في الكائن '${expr.obj.name.lexeme}' لأنه ثابت معرف بـ'ألزم'.",
+                                expr.name.location,
+                                suggestion = "عرّف الكائن بـ'ليكن' إذا كنت تحتاج إلى تعديل حقوله.",
+                                length = expr.name.lexeme.length
                             )
                         )
                     }
@@ -789,8 +839,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                      // If the object being set is coming directly from an index or 'خذ', it's immutable.
                      diagnostics.report(
                          SakhrError.TypeError(
-                             "لا يمكن تعديل حقول البنية المستخرجة من قائمة لأنها ثابتة (غير قابلة للتغيير). يُنصح باستخدام الدالة 'استبدل(الفهرس، القيمة_الجديدة)' لتحديث القائمة بدلاً من ذلك.",
-                             expr.name.location
+                             "البنى المستخرجة من قائمة ثابتة ولا يمكن تعديل حقولها مباشرة.",
+                             expr.name.location,
+                             suggestion = "استخدم الدالة 'استبدل' لتحديث القائمة، مثال: القائمة.استبدل(الفهرس، القيمة_الجديدة)",
+                             length = expr.name.lexeme.length
                          )
                      )
                 }
@@ -802,8 +854,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                         if (!isAssignable(fieldType, valueType)) {
                             diagnostics.report(
                                 SakhrError.TypeError(
-                                    "نوع الحقل '$propertyName' هو '${fieldType.lexeme}'، ولكن تم تعيين قيمة من نوع '${valueType.lexeme}'.",
-                                    expr.name.location
+                                    "الحقل '$propertyName' من نوع '${fieldType.lexeme}'، ولا يمكن إسناد قيمة من نوع '${valueType.lexeme}' إليه.",
+                                    expr.name.location,
+                                    length = propertyName.length
                                 )
                             )
                         }
@@ -811,10 +864,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     }
                 }
 
+                val fieldNames = struct?.fields?.keys ?: emptySet()
+                val suggestion = DiagnosticEngine.findClosest(propertyName, fieldNames)
                 diagnostics.report(
                     SakhrError.TypeError(
-                        "النوع '${objType.lexeme}' لا يحتوي على خاصية قابلة للتعيين باسم '${propertyName}'.",
-                        expr.name.location
+                        "النوع '${objType.lexeme}' لا يحتوي على حقل قابل للتعيين باسم '${propertyName}'.",
+                        expr.name.location,
+                        suggestion = suggestion?.let { "هل قصدت '$it'؟" },
+                        length = propertyName.length
                     )
                 )
                 SakhrType.UNKNOWN
@@ -824,8 +881,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 if (currentFunction?.kind != FunctionKind.EXTENSION) {
                     diagnostics.report(
                         SakhrError.TypeError(
-                            "لا يمكن استخدام الكلمة المفتاحية 'السياق' إلا داخل الدوال الممتدة.",
-                            expr.keyword.location
+                            "الكلمة 'السياق' تشير إلى القيمة المستقبلة، ولا تتوفر إلا داخل الدوال الممتدة.",
+                            expr.keyword.location,
+                            length = expr.keyword.lexeme.length
                         )
                     )
                     return SakhrType.UNKNOWN
@@ -841,26 +899,29 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         struct: StructInfo,
         positionalArgTypes: List<SakhrType>,
         namedArgTypes: Map<String, SakhrType>,
-        location: Location
+        location: Location,
+        namedArgLocations: Map<String, Location> = emptyMap()
     ): SakhrType {
         // 1. Positional args
         for (i in positionalArgTypes.indices) {
             if (i >= struct.fields.size) {
-                diagnostics.report(SakhrError.TypeError("وسائط زائدة لمنشئ البنية '${struct.name}'.", location))
+                diagnostics.report(SakhrError.TypeError("عدد الوسائط الممررة لمنشئ البنية '${struct.name}' أكبر من عدد حقولها (${struct.fields.size}).", location, suggestion = "احذف الوسائط الزائدة حتى تطابق حقول البنية."))
                 break
             }
             val fieldName = struct.fields.keys.elementAt(i)
             val fieldType = struct.fields[fieldName]!!
             if (!isAssignable(fieldType, positionalArgTypes[i])) {
-                diagnostics.report(SakhrError.TypeError("نوع الحقل '$fieldName' هو '${fieldType.lexeme}'، ولكن تم تمرير '${positionalArgTypes[i].lexeme}'.", location))
+                diagnostics.report(SakhrError.TypeError("الحقل '$fieldName' من نوع '${fieldType.lexeme}'، ولا يمكن تمرير قيمة من نوع '${positionalArgTypes[i].lexeme}' له.", location))
             }
         }
 
         // 2. Named args
         for ((fieldName, type) in namedArgTypes) {
+            val argLoc = namedArgLocations[fieldName] ?: location
             val fieldType = struct.fields[fieldName]
             if (fieldType == null) {
-                diagnostics.report(SakhrError.TypeError("البنية '${struct.name}' لا تحتوي على حقل باسم '$fieldName'.", location))
+                val suggestion = DiagnosticEngine.findClosest(fieldName, struct.fields.keys)
+                diagnostics.report(SakhrError.TypeError("البنية '${struct.name}' لا تملك حقلاً باسم '$fieldName'.", argLoc, suggestion = suggestion?.let { "هل قصدت '$it'؟" }, length = fieldName.length))
                 continue
             }
 
@@ -868,7 +929,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 // Late inference in Type Checker
                 struct.fields[fieldName] = type
             } else if (!isAssignable(fieldType, type)) {
-                diagnostics.report(SakhrError.TypeError("نوع الحقل '$fieldName' هو '${fieldType.lexeme}'، ولكن تم تمرير '${type.lexeme}'.", location))
+                diagnostics.report(SakhrError.TypeError("الحقل '$fieldName' من نوع '${fieldType.lexeme}'، ولا يمكن تمرير قيمة من نوع '${type.lexeme}' له.", argLoc, length = fieldName.length))
             }
         }
 
@@ -994,8 +1055,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         if (scope.variables.containsKey(name.lexeme)) {
             diagnostics.report(
                 SakhrError.TypeError(
-                    "تم تعريف الاسم '${name.lexeme}' مسبقاً في هذا النطاق.",
-                    name.location
+                    "الاسم '${name.lexeme}' معرف مسبقاً في هذا النطاق.",
+                    name.location,
+                    suggestion = "اختر اسماً مختلفاً، أو استخدم الاسم الموجود مباشرة دون إعادة تعريفه.",
+                    length = name.lexeme.length
                 )
             )
         }
@@ -1065,7 +1128,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             is Expr.Assignment -> expr.name.location
             is Expr.Context -> expr.keyword.location
             is Expr.Grouping -> getExprLocation(expr.expression)
-            is Expr.Literal -> Location(0, 0)
+            is Expr.Literal -> expr.location ?: Location(0, 0)
             is Expr.Set -> expr.name.location
         }
     }

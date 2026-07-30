@@ -85,8 +85,8 @@ class Optimizer {
                 val right = optimizeExpr(expr.right)
                 if (right is Expr.Literal) {
                     when (expr.operator.type) {
-                        TokenType.MINUS -> if (right.value is Double) return Expr.Literal(-right.value)
-                        TokenType.NOT -> return Expr.Literal(!isTruthy(right.value))
+                        TokenType.MINUS -> if (right.value is Double) return Expr.Literal(-right.value, expr.operator.location)
+                        TokenType.NOT -> return Expr.Literal(!isTruthy(right.value), expr.operator.location)
                         else -> {}
                     }
                 }
@@ -112,21 +112,21 @@ class Optimizer {
         val r = right.value
         return when (operator.type) {
             TokenType.PLUS -> when (l) {
-                is Double if r is Double -> Expr.Literal(l + r)
-                is String if r is String -> Expr.Literal(l + r)
+                is Double if r is Double -> Expr.Literal(l + r, operator.location)
+                is String if r is String -> Expr.Literal(l + r, operator.location)
                 else -> null
             }
-            TokenType.MINUS -> if (l is Double && r is Double) Expr.Literal(l - r) else null
-            TokenType.STAR -> if (l is Double && r is Double) Expr.Literal(l * r) else null
+            TokenType.MINUS -> if (l is Double && r is Double) Expr.Literal(l - r, operator.location) else null
+            TokenType.STAR -> if (l is Double && r is Double) Expr.Literal(l * r, operator.location) else null
             // Division/modulo by zero is left for the runtime diagnostics
-            TokenType.SLASH -> if (l is Double && r is Double && r != 0.0) Expr.Literal(l / r) else null
-            TokenType.PERCENT -> if (l is Double && r is Double && r != 0.0) Expr.Literal(l % r) else null
-            TokenType.GREATER -> if (l is Double && r is Double) Expr.Literal(l > r) else null
-            TokenType.GREATER_EQUALS -> if (l is Double && r is Double) Expr.Literal(l >= r) else null
-            TokenType.LESS -> if (l is Double && r is Double) Expr.Literal(l < r) else null
-            TokenType.LESS_EQUALS -> if (l is Double && r is Double) Expr.Literal(l <= r) else null
-            TokenType.EQUALS_EQUALS -> Expr.Literal(l == r)
-            TokenType.BANG_EQUALS -> Expr.Literal(l != r)
+            TokenType.SLASH -> if (l is Double && r is Double && r != 0.0) Expr.Literal(l / r, operator.location) else null
+            TokenType.PERCENT -> if (l is Double && r is Double && r != 0.0) Expr.Literal(l % r, operator.location) else null
+            TokenType.GREATER -> if (l is Double && r is Double) Expr.Literal(l > r, operator.location) else null
+            TokenType.GREATER_EQUALS -> if (l is Double && r is Double) Expr.Literal(l >= r, operator.location) else null
+            TokenType.LESS -> if (l is Double && r is Double) Expr.Literal(l < r, operator.location) else null
+            TokenType.LESS_EQUALS -> if (l is Double && r is Double) Expr.Literal(l <= r, operator.location) else null
+            TokenType.EQUALS_EQUALS -> Expr.Literal(l == r, operator.location)
+            TokenType.BANG_EQUALS -> Expr.Literal(l != r, operator.location)
             else -> null
         }
     }

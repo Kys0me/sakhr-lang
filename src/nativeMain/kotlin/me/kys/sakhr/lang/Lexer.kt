@@ -7,32 +7,36 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
     private var line = 1
     private var column = 1
 
-    private val keywords = mapOf(
-        "إجراء" to TokenType.PROCEDURE,
-        "ليكن" to TokenType.LET,
-        "ألزم" to TokenType.CONST,
-        "إن كان" to TokenType.IF,
-        "إذن" to TokenType.THEN,
-        "وإلا" to TokenType.ELSE,
-        "ابدأ" to TokenType.BEGIN,
-        "انتهى" to TokenType.END,
-        "السياق" to TokenType.CONTEXT,
-        "رد" to TokenType.RETURN,
-        "كرر" to TokenType.REPEAT,
-        "لكل" to TokenType.FOR_EACH,
-        "في" to TokenType.IN,
-        "اكفف" to TokenType.BREAK,
-        "امض" to TokenType.CONTINUE,
-        "بلغ" to TokenType.RAISE,
-        "و" to TokenType.AND,
-        "أو" to TokenType.OR,
-        "ليس" to TokenType.NOT,
-        "فارغ" to TokenType.NULL,
-        "عدم" to TokenType.VOID,
-        "بنية" to TokenType.STRUCT,
-        "صح" to TokenType.BOOLEAN,
-        "خطأ" to TokenType.BOOLEAN
-    )
+    companion object {
+        val keywords = mapOf(
+            "إجراء" to TokenType.PROCEDURE,
+            "ليكن" to TokenType.LET,
+            "ألزم" to TokenType.CONST,
+            "إذن" to TokenType.THEN,
+            "وإلا" to TokenType.ELSE,
+            "ابدأ" to TokenType.BEGIN,
+            "انتهى" to TokenType.END,
+            "السياق" to TokenType.CONTEXT,
+            "رد" to TokenType.RETURN,
+            "كرر" to TokenType.REPEAT,
+            "لكل" to TokenType.FOR_EACH,
+            "في" to TokenType.IN,
+            "اكفف" to TokenType.BREAK,
+            "امض" to TokenType.CONTINUE,
+            "بلغ" to TokenType.RAISE,
+            "و" to TokenType.AND,
+            "أو" to TokenType.OR,
+            "ليس" to TokenType.NOT,
+            "فارغ" to TokenType.NULL,
+            "عدم" to TokenType.VOID,
+            "بنية" to TokenType.STRUCT,
+            "صح" to TokenType.BOOLEAN,
+            "خطأ" to TokenType.BOOLEAN,
+            // Multi-word keywords, listed here so misspelling suggestions can offer them
+            "إن كان" to TokenType.IF,
+            "ما دام" to TokenType.WHILE
+        )
+    }
 
     fun scanTokens(): List<Token> {
         while (!isAtEnd()) {
@@ -106,8 +110,9 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
                 if (match('=')) addToken(TokenType.BANG_EQUALS)
                 else diagnostics.report(
                     SakhrError.LexicalError(
-                        "رمز غير صالح: '!'",
-                        Location(line, column - 1)
+                        "الرمز '!' لا يُستخدم وحده في لغة صخر.",
+                        Location(line, column - 1),
+                        suggestion = "استخدم '!=' للتحقق من عدم المساواة، أو الكلمة 'ليس' لنفي قيمة منطقية."
                     )
                 )
             }
@@ -127,15 +132,41 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
                 } else if (isArabicAlpha(c)) {
                     identifier()
                 } else {
-                    diagnostics.report(
-                        SakhrError.LexicalError(
-                            "رمز غير صالح: '$c'",
-                            Location(line, column - 1)
-                        )
-                    )
+                    reportUnexpectedChar(c)
                 }
             }
         }
+    }
+
+    /**
+     * Explains what the stray character likely was instead of just echoing it;
+     * most of these come from habits carried over from other languages.
+     */
+    private fun reportUnexpectedChar(c: Char) {
+        val location = Location(line, column - 1)
+        val (message, suggestion) = when (c) {
+            ',' -> "الفاصلة اللاتينية ',' غير معتمدة في لغة صخر." to
+                    "استخدم الفاصلة العربية '،' للفصل بين العناصر."
+
+            '?' -> "علامة الاستفهام اللاتينية '?' غير معتمدة في لغة صخر." to
+                    "استخدم علامة الاستفهام العربية '؟' للأنواع الاختيارية."
+
+            ';' -> "الفاصلة المنقوطة ';' لا تُستخدم في لغة صخر." to
+                    "احذفها؛ فلا حاجة لعلامة إنهاء في نهاية الأوامر."
+
+            '{', '}' -> "القوس '$c' لا يُستخدم لتحديد الكتل في لغة صخر." to
+                    "استخدم 'ابدأ' لفتح الكتلة و'انتهى' لإغلاقها."
+
+            '\'' -> "علامة الاقتباس المفردة (') غير معتمدة لكتابة النصوص." to
+                    "أحط النص بعلامتي اقتباس مزدوجتين \"...\" بدلاً منها."
+
+            in 'a'..'z', in 'A'..'Z' -> "الحرف اللاتيني '$c' لا يصلح لبدء اسم أو كلمة في لغة صخر." to
+                    "تُكتب الأسماء والكلمات المفتاحية بالأحرف العربية، ولكتابة نص لاتيني ضعه داخل علامتي اقتباس \"...\"."
+
+            else -> "الرمز '$c' غير معروف في لغة صخر." to
+                    "تأكد من أن الرمز مقصود، أو احذفه إن كان قد أُدخل بالخطأ."
+        }
+        diagnostics.report(SakhrError.LexicalError(message, location, suggestion))
     }
 
     private fun identifier() {
@@ -198,16 +229,25 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
     }
 
     private fun string() {
+        // Remember where the string opened so an unterminated string points at
+        // its opening quote instead of the end of the file.
+        val openLine = line
+        val openColumn = column - 1
+
         while (peek() != '"' && !isAtEnd()) {
-            if (peek() == '\n') line++
+            if (peek() == '\n') {
+                line++
+                column = 0 // advance() below brings it back to 1
+            }
             advance()
         }
 
         if (isAtEnd()) {
             diagnostics.report(
                 SakhrError.LexicalError(
-                    "نص غير منتهٍ؛ يتوقع وجود علامة اقتباس في نهاية النص.",
-                    Location(line, column - 1)
+                    "انتهى الملف قبل إغلاق النص الذي يبدأ هنا.",
+                    Location(openLine, openColumn),
+                    suggestion = "أضف علامة اقتباس \" في نهاية النص لإغلاقه."
                 )
             )
             return
@@ -226,8 +266,9 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
         if (c in tashkeelRange) {
             diagnostics.report(
                 SakhrError.LexicalError(
-                    "يمنع استخدام علامات التشكيل خارج النصوص الصريحة.",
-                    Location(line, column - 1)
+                    "علامات التشكيل غير مسموح بها في أسماء المعرفات والكلمات المفتاحية.",
+                    Location(line, column - 1),
+                    suggestion = "احذف علامة التشكيل؛ التشكيل مسموح به فقط داخل النصوص بين علامتي الاقتباس."
                 )
             )
         }

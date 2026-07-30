@@ -31,8 +31,8 @@ class SakhrRaiseException(val error: Any?) : RuntimeException()
 
 // Loop control signals carry no state, so they are reused as singletons to
 // avoid an allocation (and a backtrace capture) on every break/continue.
-object BreakSignal : RuntimeException()
-object ContinueSignal : RuntimeException()
+class BreakSignal : RuntimeException()
+class ContinueSignal : RuntimeException()
 
 class SakhrFunction(
     private val declaration: Stmt.Function,
@@ -151,10 +151,18 @@ class SakhrStruct(
             // 3. Named arguments
             for ((name, value) in namedArguments) {
                 val field = declaration.fields.find { it.name.lexeme == name }
-                    ?: throw SakhrError.RuntimeError(
-                        "البنية '${declaration.name.lexeme}' لا تحتوي على حقل باسم '$name'.",
-                        location
-                    )
+                    ?: run {
+                        val hint = DiagnosticEngine.findClosest(
+                            name,
+                            declaration.fields.map { it.name.lexeme }
+                        )?.let { "هل قصدت الحقل '$it'؟" }
+                            ?: "حقول البنية المتاحة: ${declaration.fields.joinToString("، ") { it.name.lexeme }}."
+                        throw SakhrError.RuntimeError(
+                            "البنية '${declaration.name.lexeme}' لا تملك حقلاً باسم '$name'.",
+                            location,
+                            hint
+                        )
+                    }
                 validateAndSetField(instance, field.name, value, interpreter)
             }
 
@@ -183,8 +191,9 @@ class SakhrStruct(
 
         if (expectedType != null && typeName != expectedType && value != null) {
             throw SakhrError.RuntimeError(
-                "نوع الحقل '$name' هو '${expectedType}'، ولكن تم تمرير قيمة من نوع '$typeName'.",
-                fieldName.location
+                "لا يمكن إسناد قيمة من نوع '$typeName' إلى الحقل '$name' لأنه معرّف بالنوع '$expectedType'.",
+                fieldName.location,
+                length = name.length
             )
         }
 
@@ -255,8 +264,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 location: Location
             ): Any =
                 throw SakhrError.RuntimeError(
-                    "لا يمكن استدعاء الدالة الممتدة '${methodName}' مباشرة.",
-                    location
+                    "الدالة الممتدة '${methodName}' لا تُستدعى مباشرة، بل تُستدعى على قيمة من النوع الذي تمتده.",
+                    location,
+                    "استخدم الصيغة 'القيمة.${methodName}(...)' لاستدعائها."
                 )
 
             override fun callWithContext(
@@ -272,8 +282,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     fun pushStructInitialization(struct: SakhrStruct, location: Location) {
         if (structInitializationStack.size > 100) {
             throw SakhrError.RuntimeError(
-                "تم اكتشاف تكرار لا نهائي أو عمق كبير جداً أثناء تهيئة البنية '${struct.declaration.name.lexeme}'.",
-                location
+                "تجاوزت تهيئة البنية '${struct.declaration.name.lexeme}' الحد الأقصى للعمق، ويرجّح وجود تكرار لا نهائي.",
+                location,
+                "تحقق من أن حقول البنية لا تُنشئ نسخة منها أثناء التهيئة."
             )
         }
         structInitializationStack.add(struct)
@@ -295,7 +306,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         } catch (raise: SakhrRaiseException) {
             diagnostics.report(
                 SakhrError.RuntimeError(
-                    "خطأ غير معالج: ${stringify(raise.error)}",
+                    "أُطلق خطأ لم تتم معالجته: ${stringify(raise.error)}",
                     Location(0, 0)
                 )
             )
@@ -348,8 +359,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 val iterable = evaluate(stmt.iterable)
                 if (iterable !is List<*>) {
                     throw SakhrError.RuntimeError(
-                        "لا يمكن التكرار إلا على قائمة.",
-                        stmt.elementVar.location
+                        "لا يمكن التكرار إلا على قائمة، والقيمة المعطاة من نوع '${getSakhrTypeName(iterable)}'.",
+                        stmt.elementVar.location,
+                        "تأكد من أن ما بعد 'في' قائمة، مثل: لكل عنصر في [1، 2، 3]."
                     )
                 }
                 for ((index, element) in iterable.withIndex()) {
@@ -366,8 +378,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 }
             }
 
-            is Stmt.Break -> throw BreakSignal
-            is Stmt.Continue -> throw ContinueSignal
+            is Stmt.Break -> throw BreakSignal()
+            is Stmt.Continue -> throw ContinueSignal()
 
             is Stmt.Let -> {
                 val value = stmt.initializer?.let { evaluate(it) }
@@ -413,8 +425,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 if (value.error != null) {
                     // Unhandled error
                     throw SakhrError.RuntimeError(
-                        "خطأ غير معالج: ${stringify(value.error)}",
-                        names[0].location
+                        "أُطلق خطأ لم تتم معالجته: ${stringify(value.error)}",
+                        names[0].location,
+                        "استقبل الخطأ في متغير ثانٍ لمعالجته، مثل: ليكن النتيجة، الخطأ = ..."
                     )
                 }
                 value.value
@@ -456,8 +469,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                             right
                         )
                         else throw SakhrError.RuntimeError(
-                            "العملية '+' غير مدعومة بين هذه الأنواع.",
-                            expr.operator.location
+                            "لا يمكن تطبيق العملية '+' بين قيمة من نوع '${getSakhrTypeName(left)}' وأخرى من نوع '${getSakhrTypeName(right)}'.",
+                            expr.operator.location,
+                            "يُستخدم '+' لجمع الأرقام أو لدمج النصوص فقط."
                         )
                     }
 
@@ -466,23 +480,26 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
 
                     TokenType.SLASH -> numOp(expr.operator, left, right) { l, r ->
                         if (r == 0.0) throw SakhrError.RuntimeError(
-                            "لا يمكن القسمة على صفر.",
-                            expr.operator.location
+                            "القسمة على صفر غير معرّفة.",
+                            expr.operator.location,
+                            "تأكد من أن المقسوم عليه لا يساوي صفراً قبل إجراء القسمة."
                         )
                         l / r
                     }
 
                     TokenType.PERCENT -> numOp(expr.operator, left, right) { l, r ->
                         if (r == 0.0) throw SakhrError.RuntimeError(
-                            "لا يمكن حساب باقي القسمة على صفر.",
-                            expr.operator.location
+                            "حساب باقي القسمة على صفر غير معرّف.",
+                            expr.operator.location,
+                            "تأكد من أن المقسوم عليه لا يساوي صفراً قبل حساب الباقي."
                         )
                         l % r
                     }
 
                     else -> throw SakhrError.RuntimeError(
-                        "عملية غير مدعومة '${expr.operator.lexeme}'.",
-                        expr.operator.location
+                        "العملية '${expr.operator.lexeme}' غير مدعومة.",
+                        expr.operator.location,
+                        length = expr.operator.lexeme.length
                     )
                 }
             }
@@ -493,8 +510,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                     TokenType.OR -> if (isTruthy(left)) left else evaluate(expr.right)
                     TokenType.AND -> if (!isTruthy(left)) left else evaluate(expr.right)
                     else -> throw SakhrError.RuntimeError(
-                        "عملية منطقية غير مدعومة '${expr.operator.lexeme}'.",
-                        expr.operator.location
+                        "العملية المنطقية '${expr.operator.lexeme}' غير مدعومة.",
+                        expr.operator.location,
+                        length = expr.operator.lexeme.length
                     )
                 }
             }
@@ -505,8 +523,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                     TokenType.MINUS -> -checkNumberOperand(expr.operator, right)
                     TokenType.NOT -> !isTruthy(right)
                     else -> throw SakhrError.RuntimeError(
-                        "عملية أحادية غير مدعومة '${expr.operator.lexeme}'.",
-                        expr.operator.location
+                        "العملية الأحادية '${expr.operator.lexeme}' غير مدعومة.",
+                        expr.operator.location,
+                        length = expr.operator.lexeme.length
                     )
                 }
             }
@@ -516,22 +535,25 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             is Expr.Index -> {
                 val obj = evaluate(expr.obj)
                 val indexDouble = evaluate(expr.index) as? Double ?: throw SakhrError.RuntimeError(
-                    "يجب أن يكون الفهرس رقماً.",
-                    expr.bracket.location
+                    "الفهرس يجب أن يكون رقماً، لا قيمة من نوع آخر.",
+                    expr.bracket.location,
+                    "استخدم رقماً صحيحاً بين قوسي الفهرسة، مثل: القائمة[0]."
                 )
                 val index = indexDouble.toInt()
 
                 if (obj !is List<*>) {
                     throw SakhrError.RuntimeError(
-                        "لا يمكن استخدام الفهرسة إلا مع القوائم.",
+                        "لا يمكن استخدام الفهرسة إلا مع القوائم، والقيمة المعطاة من نوع '${getSakhrTypeName(obj)}'.",
                         expr.bracket.location
                     )
                 }
 
                 if (index < 0 || index >= obj.size) {
                     throw SakhrError.RuntimeError(
-                        "الفهرس ($index) خارج النطاق المسموح به؛ حجم القائمة هو ${obj.size}.",
-                        expr.bracket.location
+                        "الفهرس ($index) خارج حدود القائمة، وعدد عناصرها ${obj.size}.",
+                        expr.bracket.location,
+                        if (obj.isEmpty()) "القائمة فارغة، لذا لا يمكن الوصول إلى أي عنصر فيها."
+                        else "الفهارس الصالحة تتراوح بين 0 و ${obj.size - 1}."
                     )
                 }
 
@@ -555,7 +577,10 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 }
 
                 if (callee !is SakhrCallable) {
-                    throw SakhrError.RuntimeError("يُسمح باستدعاء الدوال فقط.", expr.paren.location)
+                    throw SakhrError.RuntimeError(
+                        "لا يمكن استدعاء قيمة من نوع '${getSakhrTypeName(callee)}'؛ الاستدعاء يقتصر على الدوال.",
+                        expr.paren.location
+                    )
                 }
 
                 val totalArgs = arguments.size + namedArguments.size
@@ -566,7 +591,7 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                         "بين ${callee.minArity()} و ${callee.maxArity()}"
                     }
                     throw SakhrError.RuntimeError(
-                        "تتوقع الدالة $expectedStr من الوسائط، ولكن تم تمرير $totalArgs.",
+                        "عدد الوسائط غير مطابق؛ الدالة تتوقع $expectedStr من الوسائط بينما تم تمرير $totalArgs.",
                         expr.paren.location
                     )
                 }
@@ -603,8 +628,13 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
 
 
                 throw SakhrError.RuntimeError(
-                    "تعذر العثور على الحقل أو الدالة الممتدة '${methodName}' للنوع '${typeName}'.",
-                    expr.name.location
+                    "النوع '${typeName}' لا يملك حقلاً أو دالة ممتدة باسم '${methodName}'.",
+                    expr.name.location,
+                    if (obj is SakhrInstance)
+                        DiagnosticEngine.findClosest(methodName, obj.fields.keys)
+                            ?.let { "هل قصدت الحقل '$it'؟" }
+                    else null,
+                    length = methodName.length
                 )
             }
 
@@ -612,22 +642,28 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 val obj = evaluate(expr.obj)
                 if (obj !is SakhrInstance) {
                     throw SakhrError.RuntimeError(
-                        "لا يمكن التعيين إلا لحقول بنية.",
-                        expr.name.location
+                        "لا يمكن تعيين قيمة إلا لحقول البنى، والقيمة المستهدفة من نوع '${getSakhrTypeName(obj)}'.",
+                        expr.name.location,
+                        length = expr.name.lexeme.length
                     )
                 }
 
                 if (!obj.isMutable) {
                     throw SakhrError.RuntimeError(
-                        "لا يمكن تعديل الحقل '${expr.name.lexeme}' لأن الكائنات المستخرجة من القوائم ثابتة (غير قابلة للتغيير). يُنصح باستخدام الدالة 'استبدل(الفهرس، القيمة_الجديدة)' لتحديث القائمة بدلاً من ذلك.",
-                        expr.name.location
+                        "لا يمكن تعديل الحقل '${expr.name.lexeme}' لأن الكائنات المستخرجة من القوائم ثابتة (غير قابلة للتغيير).",
+                        expr.name.location,
+                        "لتحديث عنصر في قائمة استخدم الدالة 'استبدل(الفهرس، القيمة_الجديدة)'.",
+                        length = expr.name.lexeme.length
                     )
                 }
 
                 if (!obj.fields.containsKey(expr.name.lexeme)) {
                     throw SakhrError.RuntimeError(
-                        "البنية '${obj.struct.declaration.name.lexeme}' لا تحتوي على حقل باسم '${expr.name.lexeme}'.",
-                        expr.name.location
+                        "البنية '${obj.struct.declaration.name.lexeme}' لا تملك حقلاً باسم '${expr.name.lexeme}'.",
+                        expr.name.location,
+                        DiagnosticEngine.findClosest(expr.name.lexeme, obj.fields.keys)
+                            ?.let { "هل قصدت الحقل '$it'؟" },
+                        length = expr.name.lexeme.length
                     )
                 }
 
@@ -638,8 +674,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 val expectedType = obj.struct.getFieldType(expr.name.lexeme)
                 if (expectedType != null && typeName != expectedType && value != null) {
                     throw SakhrError.RuntimeError(
-                        "نوع الحقل '${expr.name.lexeme}' هو '$expectedType'، ولكن تم تعيين قيمة من نوع '$typeName'.",
-                        expr.name.location
+                        "لا يمكن إسناد قيمة من نوع '$typeName' إلى الحقل '${expr.name.lexeme}' لأنه معرّف بالنوع '$expectedType'.",
+                        expr.name.location,
+                        length = expr.name.lexeme.length
                     )
                 }
 
@@ -713,8 +750,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     private fun checkNumberOperand(operator: Token, operand: Any?): Double {
         if (operand is Double) return operand
         throw SakhrError.RuntimeError(
-            "العملية '${operator.lexeme}' تتطلب رقماً.",
-            operator.location
+            "العملية '${operator.lexeme}' تتطلب قيمة رقمية، والقيمة المعطاة من نوع '${getSakhrTypeName(operand)}'.",
+            operator.location,
+            length = operator.lexeme.length
         )
     }
 
@@ -728,8 +766,9 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     ): R {
         if (left is Double && right is Double) return block(left, right)
         throw SakhrError.RuntimeError(
-            "العملية '${operator.lexeme}' تتطلب أرقاماً.",
-            operator.location
+            "العملية '${operator.lexeme}' تتطلب رقمين على جانبيها.",
+            operator.location,
+            length = operator.lexeme.length
         )
     }
 }

@@ -18,14 +18,14 @@ class Cli {
         when (args[0]) {
             "شغل" -> {
                 if (args.size < 2) {
-                    println("خطأ: يجب تحديد مسار الملف.")
+                    println("يجب تحديد مسار الملف المراد تشغيله، مثل: صخر شغل برنامج.صخر")
                 } else {
                     runFile(args[1], args.drop(2))
                 }
             }
             "فحص" -> {
                 if (args.size < 2) {
-                    println("خطأ: يجب تحديد مسار الملف.")
+                    println("يجب تحديد مسار الملف المراد فحصه، مثل: صخر فحص برنامج.صخر")
                 } else {
                     checkFile(args[1])
                 }
@@ -34,7 +34,11 @@ class Cli {
             "إصدار" -> println("لغة صخر (Sakhr) - الإصدار الأولي 1.0")
             "مساعدة" -> help()
             else -> {
-                println("أمر غير معروف: ${args[0]}")
+                val known = listOf("شغل", "فحص", "تفاعل", "إصدار", "مساعدة")
+                println("الأمر '${args[0]}' غير معروف.")
+                DiagnosticEngine.findClosest(args[0], known)?.let {
+                    println("هل قصدت الأمر '$it'؟")
+                }
                 help()
             }
         }
@@ -90,10 +94,11 @@ class Cli {
             } catch (e: SakhrError.RuntimeError) {
                 diagnostics.report(e)
             } catch (e: SakhrRaiseException) {
-                diagnostics.report(SakhrError.RuntimeError("خطأ غير معالج: ${interpreter.stringify(e.error)}", Location(0, 0)))
+                diagnostics.report(SakhrError.RuntimeError("أُطلق خطأ لم تتم معالجته: ${interpreter.stringify(e.error)}", Location(0, 0)))
             }
         } else {
-            println("خطأ: تعذر العثور على دالة 'المطلع' لبدء البرنامج.")
+            println("تعذر بدء البرنامج لأن دالة المطلع 'المطلع' غير موجودة.")
+            println("البرنامج يبدأ من دالة اسمها 'المطلع'، عرّفها بـ: إجراء المطلع ابدأ ... انتهى.")
         }
     }
 
@@ -109,13 +114,20 @@ class Cli {
         val parser = Parser(tokens, diagnostics)
         val statements = parser.parse()
 
-        if (diagnostics.hasErrors()) return
+        if (diagnostics.hasErrors()) {
+            println()
+            println(diagnostics.summary())
+            return
+        }
 
         val typeChecker = TypeChecker(diagnostics)
         typeChecker.check(statements)
 
         if (!diagnostics.hasErrors()) {
-            println("تم التحقق بنجاح: الكود سليم.")
+            println("تم التحقق بنجاح، ولم يُعثر على أي أخطاء في الكود.")
+        } else {
+            println()
+            println(diagnostics.summary())
         }
     }
 
@@ -155,7 +167,7 @@ class Cli {
     @OptIn(ExperimentalForeignApi::class)
     private fun readFile(path: String): String? {
         val file = fopen(path, "r") ?: run {
-            println("خطأ: تعذر فتح الملف '$path'.")
+            println("تعذر فتح الملف '$path'؛ تأكد من وجود الملف وصحة مساره.")
             return null
         }
 

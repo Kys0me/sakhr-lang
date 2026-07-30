@@ -22,7 +22,11 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
                 else -> {
                     val token = peek()
                     if (token.type != TokenType.EOF) {
-                        throw error(token, "لا يمكن كتابة أوامر برمجية مباشرة في هذا المكان. يرجى نقل الكود التنفيذي (مثل استدعاء الدوال، الحلقات، أو الشروط) إلى داخل دالة 'المطلع'.")
+                        throw error(
+                            token,
+                            "لا يُسمح بكتابة أوامر تنفيذية خارج الدوال؛ المستوى الأعلى للملف مخصص لتعريفات 'إجراء' و'بنية' و'ليكن' و'ألزم' فقط.",
+                            suggestion = "انقل هذا الكود إلى داخل دالة، مثلاً: إجراء المطلع() ابدأ ... انتهى"
+                        )
                     }
                     null
                 }
@@ -171,7 +175,11 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         if (match(TokenType.COLON)) {
             type = parseType("يُتوقع وجود اسم النوع بعد ':'.")
         }
-        consume(TokenType.EQUALS, "يجب تعيين قيمة ابتدائية للثابت باستخدام '='.")
+        consume(
+            TokenType.EQUALS,
+            "الثابت يحتاج إلى قيمة ابتدائية عند تعريفه.",
+            suggestion = "الثوابت المعرفة بـ'ألزم' تُعطى قيمتها مباشرة، مثال: ألزم العدد = 5"
+        )
         val initializer = expression()
         return Stmt.Const(names, type, initializer)
     }
@@ -283,7 +291,11 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             val decl = declaration()
             if (decl != null) statements.add(decl)
         }
-        consume(TokenType.END, "يُتوقع وجود 'انتهى' لإنهاء الكتلة البرمجية.")
+        consume(
+            TokenType.END,
+            "الكتلة البرمجية لم تُغلق بـ'انتهى'.",
+            suggestion = "تأكد من أن كل 'ابدأ' تقابلها 'انتهى' في نهاية الكتلة."
+        )
         return statements
     }
 
@@ -339,12 +351,20 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             } else if (expr is Expr.Index) {
                 // Assigning to list elements directly (by index) is not supported;
                 // callers should use the 'استبدل' extension instead.
-                throw error(operator, "تعيين قيم عناصر القائمة مباشرة غير مدعوم حالياً.")
+                throw error(
+                    operator,
+                    "التعيين المباشر لعنصر في قائمة عبر الفهرس غير مدعوم.",
+                    suggestion = "استخدم الدالة الممتدة 'استبدل'، مثال: القائمة.استبدل(الفهرس، القيمة_الجديدة)"
+                )
             }
 
             // Reaching here means the target is not assignable (the valid
             // Variable/Get cases return above); abort so 'synchronize' can recover.
-            throw error(operator, "لا يمكن التعيين لهذه القيمة؛ هدف التعيين غير صالح.")
+            throw error(
+                operator,
+                "الطرف الأيسر لعملية التعيين ليس موضعاً صالحاً لتخزين قيمة.",
+                suggestion = "يمكن التعيين فقط لمتغير أو لحقل في بنية، وللمقارنة بين قيمتين استخدم '==' بدلاً من '='."
+            )
         }
 
         return expr
@@ -454,9 +474,9 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     private fun primary(): Expr {
-        if (match(TokenType.BOOLEAN, TokenType.NUMBER, TokenType.STRING)) return Expr.Literal(previous().literal)
-        if (match(TokenType.NULL)) return Expr.Literal(null)
-        if (match(TokenType.VOID)) return Expr.Literal(SakhrUnit)
+        if (match(TokenType.BOOLEAN, TokenType.NUMBER, TokenType.STRING)) return Expr.Literal(previous().literal, previous().location)
+        if (match(TokenType.NULL)) return Expr.Literal(null, previous().location)
+        if (match(TokenType.VOID)) return Expr.Literal(SakhrUnit, previous().location)
         if (match(TokenType.CONTEXT)) return Expr.Context(previous())
         if (match(TokenType.IDENTIFIER)) return Expr.Variable(previous())
         if (match(TokenType.LEFT_BRACKET)) return listLiteral()
@@ -466,7 +486,10 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             return Expr.Grouping(expr)
         }
 
-        throw error(peek(), "يُتوقع وجود تعبير أولي أو قيمة.")
+        throw error(
+            peek(),
+            "كان من المتوقع وجود تعبير هنا (قيمة، اسم متغير، أو استدعاء دالة)."
+        )
     }
 
     // قائمة حرفية: [عنصر1، عنصر2، ...]
@@ -492,9 +515,9 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         return false
     }
 
-    private fun consume(type: TokenType, message: String): Token {
+    private fun consume(type: TokenType, message: String, suggestion: String? = null): Token {
         if (check(type)) return advance()
-        throw error(peek(), message)
+        throw error(peek(), message, suggestion)
     }
 
     private fun consumeType(message: String): Token {
@@ -513,8 +536,27 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     private fun previous(): Token = tokens[current - 1]
 
     private fun error(token: Token, message: String, suggestion: String? = null): ParseError {
-        val fullMsg = if (token.type == TokenType.EOF) "$message (عند نهاية الملف)" else "$message (عند '${token.lexeme}')"
-        diagnostics.report(SakhrError.SyntaxError(fullMsg, token.location, suggestion))
+        val fullMsg = if (token.type == TokenType.EOF) {
+            "$message وصل المفسر إلى نهاية الملف قبل اكتمال الجملة."
+        } else {
+            "$message وُجد '${token.lexeme}' بدلاً من ذلك."
+        }
+        // If no explicit hint exists and the stray token is an identifier, it may
+        // be a misspelled keyword; offer the closest match.
+        val finalSuggestion = suggestion ?: run {
+            if (token.type == TokenType.IDENTIFIER) {
+                DiagnosticEngine.findClosest(token.lexeme, Lexer.keywords.keys)
+                    ?.let { "هل قصدت الكلمة المفتاحية '$it'؟" }
+            } else null
+        }
+        diagnostics.report(
+            SakhrError.SyntaxError(
+                fullMsg,
+                token.location,
+                finalSuggestion,
+                length = maxOf(1, token.lexeme.length)
+            )
+        )
         return ParseError()
     }
 
