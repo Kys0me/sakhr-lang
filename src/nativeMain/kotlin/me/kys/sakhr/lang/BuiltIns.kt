@@ -37,7 +37,7 @@ object BuiltIns {
 
         val printCall: BuiltInCall = { interpreter, args, _ ->
             println(interpreter.stringify(args[0]))
-            null
+            SakhrUnit
         }
 
         function("أكتب", listOf(SakhrType.UNKNOWN), SakhrType.VOID, printCall)
@@ -45,6 +45,7 @@ object BuiltIns {
         function("إنهاء_البرنامج", listOf(SakhrType.NUMBER), SakhrType.VOID) { _, args, _ ->
             val code = (args[0] as? Double)?.toInt() ?: 0
             exitProcess(code)
+            SakhrUnit
         }
 
         function("اقرأ", emptyList(), SakhrType.STRING) { _, _, _ ->
@@ -70,7 +71,7 @@ object BuiltIns {
         extension(SakhrType.LIST, "أضف", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
             @Suppress("UNCHECKED_CAST")
             (context as MutableList<Any?>).add(args[0])
-            null
+            SakhrUnit
         }
 
         extension(SakhrType.LIST, "أزل", listOf(SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
@@ -85,7 +86,7 @@ object BuiltIns {
             } else {
                 list.remove(arg)
             }
-            null
+            SakhrUnit
         }
 
         extension(SakhrType.LIST, "أدخل", listOf(SakhrType.NUMBER, SakhrType.UNKNOWN), SakhrType.VOID) { _, args, _, context ->
@@ -95,7 +96,7 @@ object BuiltIns {
             if (index in 0..list.size) {
                 list.add(index, args[1])
             }
-            null
+            SakhrUnit
         }
 
         extension(SakhrType.LIST, "فهرس", listOf(SakhrType.UNKNOWN), SakhrType.NUMBER) { _, args, _, context ->
@@ -111,7 +112,7 @@ object BuiltIns {
             } else {
                 throw SakhrError.RuntimeError("الفهرس ($index) خارج النطاق؛ حجم القائمة هو ${list.size}.", Location(0, 0))
             }
-            null
+            SakhrUnit
         }
 
         extension(SakhrType.LIST, "خذ", listOf(SakhrType.NUMBER), SakhrType.UNKNOWN) { _, args, _, context ->

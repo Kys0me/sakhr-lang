@@ -84,8 +84,8 @@ class Cli {
         if (mainFunc is SakhrCallable) {
             try {
                 val result = mainFunc.call(interpreter, listOf(args))
-                if (result != null) {
-                    println(result)
+                if (result != null && result != SakhrUnit) {
+                    println(interpreter.stringify(result))
                 }
             } catch (e: SakhrError.RuntimeError) {
                 diagnostics.report(e)

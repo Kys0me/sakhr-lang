@@ -183,6 +183,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                             SakhrType.LIST
                         } else if (p.defaultValue != null) {
                             val defaultType = checkExpr(p.defaultValue)
+                            if (defaultType == SakhrType.NULL_LITERAL) {
+                                diagnostics.report(
+                                    SakhrError.TypeError(
+                                        "يجب تحديد نوع الوسيط '${p.name.lexeme}' صراحة عند جعل قيمته الافتراضية 'فارغ'.",
+                                        p.name.location
+                                    )
+                                )
+                            }
                             defaultType
                         } else {
                             SakhrType.UNKNOWN
@@ -338,7 +346,16 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             is Stmt.Let -> {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.VOID
-                
+
+                if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "يجب تحديد نوع المتغير '${stmt.name.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
+                            stmt.name.location
+                        )
+                    )
+                }
+
                 val finalType = if (explicitType != null) {
                     if (stmt.initializer != null && !isAssignable(explicitType, initType)) {
                         diagnostics.report(
@@ -361,6 +378,15 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = checkExpr(stmt.initializer)
                 
+                if (initType == SakhrType.NULL_LITERAL && explicitType == null) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "يجب تحديد نوع الثابت '${stmt.name.lexeme}' صراحة عند تعيينه كـ 'فارغ'.",
+                            stmt.name.location
+                        )
+                    )
+                }
+
                 val finalType = if (explicitType != null) {
                     if (!isAssignable(explicitType, initType)) {
                         diagnostics.report(
@@ -413,7 +439,8 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     is Double -> SakhrType.NUMBER
                     is String -> SakhrType.STRING
                     is Boolean -> SakhrType.BOOLEAN
-                    null -> SakhrType.VOID
+                    SakhrUnit -> SakhrType.VOID
+                    null -> SakhrType.NULL_LITERAL
                     else -> SakhrType.UNKNOWN
                 }
             }
@@ -948,6 +975,7 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun isAssignable(target: SakhrType, source: SakhrType): Boolean {
         if (target == SakhrType.UNKNOWN || source == SakhrType.UNKNOWN) return true
+        if (source == SakhrType.NULL_LITERAL) return target != SakhrType.VOID
         if (target.lexeme != source.lexeme) return false
         if (target.lexeme == "قائمة") {
             if (target.elementType == null || source.elementType == null) return true

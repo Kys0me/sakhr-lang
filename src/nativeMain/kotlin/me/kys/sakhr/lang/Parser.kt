@@ -414,6 +414,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     private fun primary(): Expr {
         if (match(TokenType.BOOLEAN, TokenType.NUMBER, TokenType.STRING)) return Expr.Literal(previous().literal)
         if (match(TokenType.NULL)) return Expr.Literal(null)
+        if (match(TokenType.VOID)) return Expr.Literal(SakhrUnit)
         if (match(TokenType.CONTEXT)) return Expr.Context(previous())
         if (match(TokenType.IDENTIFIER)) return Expr.Variable(previous())
         if (match(TokenType.LEFT_BRACKET)) return listLiteral()
@@ -455,7 +456,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     private fun consumeType(message: String): Token {
-        if (check(TokenType.IDENTIFIER) || check(TokenType.NULL)) return advance()
+        if (check(TokenType.IDENTIFIER) || check(TokenType.VOID)) return advance()
         throw error(peek(), message)
     }
 

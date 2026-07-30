@@ -20,6 +20,8 @@ interface SakhrExtension : SakhrCallable {
     ): Any?
 }
 
+object SakhrUnit
+
 class Return(val value: Any?) : RuntimeException()
 class BreakSignal : RuntimeException()
 class ContinueSignal : RuntimeException()
@@ -71,7 +73,7 @@ class SakhrFunction(
         } catch (returnValue: Return) {
             return returnValue.value
         }
-        return null
+        return SakhrUnit
     }
 }
 
@@ -599,7 +601,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     }
 
     fun stringify(obj: Any?): String {
-        if (obj == null) return "عدم"
+        if (obj == null) return "فارغ"
+        if (obj == SakhrUnit) return "عدم"
 
         if (obj is Boolean)
             return if (obj) "صح" else "خطأ"
@@ -621,12 +624,14 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
 
     fun getSakhrTypeName(obj: Any?): String {
         return when (obj) {
+            null -> "فارغ"
+            SakhrUnit -> "عدم"
             is String -> "نص"
             is Double -> "رقم"
             is Boolean -> "منطقي"
             is List<*> -> "قائمة"
             is SakhrInstance -> obj.struct.declaration.name.lexeme
-            else -> "عدم"
+            else -> "مجهول"
         }
     }
 

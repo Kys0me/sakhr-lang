@@ -8,6 +8,7 @@ data class SakhrType(val lexeme: String, val elementType: SakhrType? = null) {
         val VOID = SakhrType("عدم")
         val LIST = SakhrType("قائمة")
         val UNKNOWN = SakhrType("مجهول")
+        val NULL_LITERAL = SakhrType("فارغ") // Pseudo-type for the null literal
 
         fun fromLexeme(lexeme: String): SakhrType {
             if (lexeme.startsWith("قائمة")) {
