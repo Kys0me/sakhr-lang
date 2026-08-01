@@ -83,6 +83,12 @@ class Cli {
             return
         }
 
+        if (!isArabicFileName(path)) {
+            println("خطأ: اسم الملف أو الامتداد غير مدعوم. يجب أن يكون اسم الملف بالعربية وينتهي بالامتداد '.صخر'.")
+            println("مثال: صخر شغل برنامج.صخر")
+            return
+        }
+
         val source = readFile(path) ?: return
         diagnostics.setSource(source, path)
         val lexer = Lexer(source, diagnostics)
@@ -134,6 +140,12 @@ class Cli {
         val diagnostics = DiagnosticEngine()
         val resolver = ModuleResolver(diagnostics)
         
+        if (!isArabicFileName(path)) {
+            println("خطأ: اسم الملف أو الامتداد غير مدعوم. يجب أن يكون اسم الملف بالعربية وينتهي بالامتداد '.صخر'.")
+            println("مثال: صخر فحص برنامج.صخر")
+            return
+        }
+
         val root = resolver.findProjectRoot(path.substringBeforeLast('/', "."))
         if (root != null) {
             try {
@@ -209,6 +221,20 @@ class Cli {
         if (diagnostics.hasErrors()) return
 
         interpreter.execute(Optimizer().optimize(statements))
+    }
+
+    private fun isArabicFileName(path: String): Boolean {
+        // We only check the file name itself, not the full directory path
+        val fileNameWithExt = path.substringAfterLast('/')
+        if (!fileNameWithExt.endsWith(".صخر")) return false
+        
+        val fileName = fileNameWithExt.substringBeforeLast('.')
+        if (fileName.isEmpty()) return false
+        
+        // Allowed: Arabic letters, digits (Arabic and Indic), underscores, and spaces
+        return fileName.all { c ->
+            (c in '\u0621'..'\u064A') || (c in '0'..'9') || (c in '\u0660'..'\u0669') || (c == '_') || (c == ' ')
+        }
     }
 
     @OptIn(ExperimentalForeignApi::class)

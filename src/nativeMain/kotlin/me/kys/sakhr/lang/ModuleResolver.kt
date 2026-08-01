@@ -112,6 +112,17 @@ class ModuleResolver(
 
     private fun tryLoadModule(import: Stmt.Import): Module? {
         val filePath = getFilePath(import) ?: return null
+        
+        if (!isArabicFileName(filePath)) {
+            diagnostics.report(
+                SakhrError.TypeError(
+                    "اسم ملف الوحدة '${import.path.joinToString(".") { it.lexeme }}' غير مدعوم. يجب أن يكون بالعربية وينتهي بـ '.صخر'.",
+                    import.path.first().location
+                )
+            )
+            return null
+        }
+
         val source = readFile(filePath) ?: run {
             diagnostics.report(
                 SakhrError.TypeError(
@@ -173,6 +184,18 @@ class ModuleResolver(
 
     private fun mergeDiagnostics(other: DiagnosticEngine) {
         other.errors.forEach { diagnostics.report(it) }
+    }
+
+    private fun isArabicFileName(path: String): Boolean {
+        val fileNameWithExt = path.substringAfterLast('/')
+        if (!fileNameWithExt.endsWith(".صخر")) return false
+        
+        val fileName = fileNameWithExt.substringBeforeLast('.')
+        if (fileName.isEmpty()) return false
+        
+        return fileName.all { c ->
+            (c in '\u0621'..'\u064A') || (c in '0'..'9') || (c in '\u0660'..'\u0669') || (c == '_') || (c == ' ')
+        }
     }
 
     @OptIn(ExperimentalForeignApi::class)
