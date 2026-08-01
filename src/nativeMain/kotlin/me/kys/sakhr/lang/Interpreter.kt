@@ -352,6 +352,22 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                 }
             }
 
+            is Stmt.Match -> {
+                val value = evaluate(stmt.expression)
+                var matched = false
+                for (case in stmt.cases) {
+                    val pattern = evaluate(case.pattern)
+                    if (value == pattern) {
+                        execute(case.body)
+                        matched = true
+                        break
+                    }
+                }
+                if (!matched && stmt.defaultBranch != null) {
+                    execute(stmt.defaultBranch)
+                }
+            }
+
             is Stmt.While -> {
                 while (isTruthy(evaluate(stmt.condition))) {
                     try {

@@ -60,6 +60,11 @@ class Optimizer {
                 stmt.fields.map { Field(it.name, it.type, it.initializer?.let { init -> optimizeExpr(init) }) }
             )
             is Stmt.Enum -> stmt
+            is Stmt.Match -> Stmt.Match(
+                optimizeExpr(stmt.expression),
+                stmt.cases.map { MatchCase(optimizeExpr(it.pattern), optimizeStmt(it.body) ?: Stmt.Block(emptyList())) },
+                stmt.defaultBranch?.let { optimizeStmt(it) }
+            )
         }
     }
 

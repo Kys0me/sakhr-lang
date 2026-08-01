@@ -218,12 +218,77 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
 
     private fun statement(): Stmt {
         if (match(TokenType.IF)) return ifStatement()
+        if (match(TokenType.MATCH)) return matchStatement()
         if (match(TokenType.WHILE)) return whileStatement()
         if (match(TokenType.FOR_EACH)) return forEachStatement()
         if (match(TokenType.BREAK)) return Stmt.Break(previous())
         if (match(TokenType.CONTINUE)) return Stmt.Continue(previous())
         if (match(TokenType.BEGIN)) return Stmt.Block(block())
         return expressionStatement()
+    }
+
+    private fun matchStatement(): Stmt {
+        val condition = expression()
+        val cases = mutableListOf<MatchCase>()
+        var defaultBranch: Stmt? = null
+
+        while (!check(TokenType.ELSE) && !check(TokenType.END) && !isAtEnd()) {
+            val pattern = expression()
+            consume(TokenType.THEN, "يُتوقع وجود الكلمة المفتاحية 'إذن' بعد النمط.")
+            
+            val bodyStatements = mutableListOf<Stmt>()
+            while (!isAtMatchCaseStart() && !check(TokenType.ELSE) && !check(TokenType.END) && !isAtEnd()) {
+                val decl = declaration()
+                if (decl != null) bodyStatements.add(decl)
+            }
+            cases.add(MatchCase(pattern, Stmt.Block(bodyStatements)))
+        }
+
+        if (match(TokenType.ELSE)) {
+            val elseStatements = mutableListOf<Stmt>()
+            while (!check(TokenType.END) && !isAtEnd()) {
+                val decl = declaration()
+                if (decl != null) elseStatements.add(decl)
+            }
+            defaultBranch = Stmt.Block(elseStatements)
+        }
+
+        consume(TokenType.END, "يُتوقع وجود 'انتهى' في نهاية جملة 'طابق'.")
+        return Stmt.Match(condition, cases, defaultBranch)
+    }
+
+    private fun isAtMatchCaseStart(): Boolean {
+        if (check(TokenType.ELSE) || check(TokenType.END) || isAtEnd()) return false
+        
+        // Heuristic for pattern followed by THEN.
+        // Most patterns are literals or enum member access (e.g., Enum.Member).
+        
+        val first = peek().type
+        
+        // Literal followed by THEN: "1 إذن"
+        if (first in listOf(TokenType.NUMBER, TokenType.STRING, TokenType.BOOLEAN, TokenType.NULL, TokenType.VOID)) {
+            return peekNext().type == TokenType.THEN
+        }
+        
+        // Identifier followed by THEN: "حالة إذن"
+        // Or Identifier followed by DOT and IDENTIFIER and THEN: "النتيجة.جديد إذن"
+        if (first == TokenType.IDENTIFIER) {
+            if (peekNext().type == TokenType.THEN) return true
+            if (peekNext().type == TokenType.DOT) {
+                if (current + 3 < tokens.size && 
+                    tokens[current + 2].type == TokenType.IDENTIFIER && 
+                    tokens[current + 3].type == TokenType.THEN) {
+                    return true
+                }
+            }
+        }
+        
+        return false
+    }
+
+    private fun peekNext(): Token {
+        if (current + 1 >= tokens.size) return tokens.last()
+        return tokens[current + 1]
     }
 
     // ما دام (شرط) كرر ... انتهى

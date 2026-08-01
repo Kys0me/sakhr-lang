@@ -48,7 +48,13 @@ sealed class Stmt {
         val name: Token,
         val members: List<Token>
     ) : Stmt()
+    data class Match(
+        val expression: Expr,
+        val cases: List<MatchCase>,
+        val defaultBranch: Stmt?
+    ) : Stmt()
 }
 
 data class Param(val name: Token, val type: Token?, val defaultValue: Expr? = null)
 data class Field(val name: Token, val type: Token?, val initializer: Expr?)
+data class MatchCase(val pattern: Expr, val body: Stmt)

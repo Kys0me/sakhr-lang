@@ -375,6 +375,77 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 }
             }
 
+            is Stmt.Match -> {
+                val exprType = checkExpr(stmt.expression)
+                
+                // Restriction: cannot use struct instance for pattern matching
+                val struct = lookupStruct(exprType.lexeme)
+                if (struct != null) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام مثيل من البنية '${exprType.lexeme}' مباشرة في جملة 'طابق'.",
+                            getExprLocation(stmt.expression),
+                            suggestion = "طابق بدلاً من ذلك على أحد حقول البنية، مثال: طابق ${exprType.lexeme}.الحقل"
+                        )
+                    )
+                }
+
+                val coveredPatterns = mutableSetOf<String>()
+                for (case in stmt.cases) {
+                    val patternType = checkExpr(case.pattern)
+                    if (!isAssignable(exprType, patternType)) {
+                        diagnostics.report(
+                            SakhrError.TypeError(
+                                "النمط من نوع '${patternType.lexeme}' لا يطابق نوع التعبير الممرر '${exprType.lexeme}'.",
+                                getExprLocation(case.pattern)
+                            )
+                        )
+                    }
+                    
+                    // Track covered patterns for exhaustiveness
+                    when (val p = case.pattern) {
+                        is Expr.Literal -> coveredPatterns.add(p.value.toString())
+                        is Expr.Variable -> coveredPatterns.add(p.name.lexeme)
+                        is Expr.Get -> coveredPatterns.add(p.name.lexeme)
+                        else -> {}
+                    }
+                    
+                    checkStmt(case.body)
+                }
+                
+                stmt.defaultBranch?.let { checkStmt(it) }
+
+                // Exhaustiveness check
+                if (stmt.defaultBranch == null) {
+                    if (exprType == SakhrType.BOOLEAN) {
+                        val hasTrue = coveredPatterns.contains("true") || coveredPatterns.contains("صح")
+                        val hasFalse = coveredPatterns.contains("false") || coveredPatterns.contains("خطأ")
+                        if (!hasTrue || !hasFalse) {
+                            diagnostics.report(
+                                SakhrError.TypeError(
+                                    "جملة 'طابق' على قيم منطقية يجب أن تغطي كلتا الحالتين (صح وخطأ) أو تحتوي على 'وإلا'.",
+                                    getExprLocation(stmt.expression)
+                                )
+                            )
+                        }
+                    } else {
+                        val enum = lookupEnum(exprType.lexeme)
+                        if (enum != null) {
+                            val missing = enum.members.filter { !coveredPatterns.contains(it) }
+                            if (missing.isNotEmpty()) {
+                                diagnostics.report(
+                                    SakhrError.TypeError(
+                                        "جملة 'طابق' على التعداد '${enum.name}' غير مكتملة؛ الحالات التالية غير مغطاة: ${missing.joinToString("، ")}.",
+                                        getExprLocation(stmt.expression),
+                                        suggestion = "أضف حالات لهذه القيم، أو أضف فرع 'وإلا' للتعامل مع الحالات المتبقية."
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             is Stmt.Let -> {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
                 val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.VOID
