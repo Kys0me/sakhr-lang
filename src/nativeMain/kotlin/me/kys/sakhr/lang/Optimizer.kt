@@ -23,6 +23,7 @@ class Optimizer {
 
     private fun optimizeStmt(stmt: Stmt): Stmt? {
         return when (stmt) {
+            is Stmt.Import -> stmt
             is Stmt.Block -> Stmt.Block(optimizeBlock(stmt.statements))
             is Stmt.Expression -> Stmt.Expression(optimizeExpr(stmt.expression))
             is Stmt.Function -> Stmt.Function(

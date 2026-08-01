@@ -223,32 +223,49 @@ class SakhrEnum(val name: String, val members: Set<String>)
 
 data class SakhrEnumValue(val enum: SakhrEnum, val name: String)
 
-class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
+class Interpreter(
+    private val diagnostics: DiagnosticEngine,
+    private val moduleResolver: ModuleResolver? = null
+) : Backend {
     val globals = Environment()
     private var environment = globals
     private val structInitializationStack = mutableListOf<SakhrStruct>()
+    private val executedModules = mutableSetOf<String>()
 
     init {
-        for (func in BuiltIns.functions) {
-            globals.define(func.name, object : SakhrCallable {
-                override fun arity(): Int = func.params.size
-                override fun call(
-                    interpreter: Interpreter,
-                    arguments: List<Any?>,
-                    namedArguments: Map<String, Any?>,
-                    location: Location
-                ): Any? =
-                    func.call(interpreter, arguments, namedArguments, location)
-            }, true)
-        }
+        // Built-ins are now linked to standard library modules.
+        // We only pre-define them if they are in the "الأساس" module or 
+        // we can just keep the legacy behavior for REPL/standalone but 
+        // prefer stdlib modules for the full system.
+        
+        // Actually, let's keep the global built-ins for now but allow 
+        // stdlib modules to "claim" them.
+        registerLegacyBuiltIns()
+    }
 
-        for (ext in BuiltIns.extensions) {
-            defineBuiltInExtension(
-                ext.receiverType.lexeme,
-                ext.name,
-                ext.params.size
-            ) { interpreter, args, namedArgs, context, location ->
-                ext.call(interpreter, args, namedArgs, context, location)
+    private fun registerLegacyBuiltIns() {
+        for (module in BuiltIns.modules.values) {
+            for (func in module.functions) {
+                globals.define(func.name, object : SakhrCallable {
+                    override fun arity(): Int = func.params.size
+                    override fun call(
+                        interpreter: Interpreter,
+                        arguments: List<Any?>,
+                        namedArguments: Map<String, Any?>,
+                        location: Location
+                    ): Any? =
+                        func.call(interpreter, arguments, namedArguments, location)
+                }, true)
+            }
+
+            for (ext in module.extensions) {
+                defineBuiltInExtension(
+                    ext.receiverType.lexeme,
+                    ext.name,
+                    ext.params.size
+                ) { interpreter, args, namedArgs, context, location ->
+                    ext.call(interpreter, args, namedArgs, context, location)
+                }
             }
         }
     }
@@ -317,20 +334,42 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
         }
     }
 
+    fun execute(module: Module) {
+        if (executedModules.contains(module.path)) return
+        executedModules.add(module.path)
+        
+        // Execute top-level statements
+        for (stmt in module.statements) {
+            execute(stmt)
+        }
+    }
+
     private fun execute(stmt: Stmt) {
         when (stmt) {
+            is Stmt.Import -> {
+                if (moduleResolver == null) return
+                val module = moduleResolver.resolve(stmt) ?: return
+                execute(module)
+            }
             is Stmt.Block -> executeBlock(stmt.statements, Environment(environment))
             is Stmt.Expression -> evaluate(stmt.expression)
             is Stmt.Function -> {
                 val function = SakhrFunction(stmt, environment, stmt.receiverType != null)
+                val name = if (stmt.receiverType != null) "${stmt.receiverType.lexeme}::${stmt.name.lexeme}" else stmt.name.lexeme
+                
+                // If this is a top-level function with an empty body,
+                // and a built-in implementation exists, don't overwrite it.
+                if (environment === globals && stmt.body.isEmpty()) {
+                    val existing = try { globals.getRaw(name) } catch (_: Exception) { null }
+                    if (existing is SakhrCallable && existing !is SakhrFunction) {
+                        return
+                    }
+                }
+
                 if (stmt.receiverType != null) {
-                    globals.define(
-                        "${stmt.receiverType.lexeme}::${stmt.name.lexeme}",
-                        function,
-                        true
-                    )
+                    globals.define(name, function, true)
                 } else {
-                    environment.define(stmt.name.lexeme, function, true)
+                    environment.define(name, function, true)
                 }
             }
 

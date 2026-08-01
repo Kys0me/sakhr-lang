@@ -53,6 +53,10 @@ sealed class Stmt {
         val cases: List<MatchCase>,
         val defaultBranch: Stmt?
     ) : Stmt()
+    data class Import(
+        val path: List<Token>,
+        val isStdLib: Boolean
+    ) : Stmt()
 }
 
 data class Param(val name: Token, val type: Token?, val defaultValue: Expr? = null)

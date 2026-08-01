@@ -19,6 +19,9 @@ enum class TokenType {
     BREAK,          // اكفف
     CONTINUE,       // امض
     RAISE,          // بلغ
+    IMPORT,         // استجلب
+    FROM,           // من
+    MOTHER,         // الأم
     AND,            // و
     OR,             // أو
     NOT,            // ليس

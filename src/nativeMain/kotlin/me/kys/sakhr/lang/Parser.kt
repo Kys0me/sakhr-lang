@@ -15,6 +15,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     private fun topLevelDeclaration(): Stmt? {
         return try {
             when {
+                match(TokenType.IMPORT) -> importDeclaration()
                 match(TokenType.PROCEDURE) -> function("إجراء")
                 match(TokenType.STRUCT) -> structDeclaration()
                 match(TokenType.ENUM) -> enumDeclaration()
@@ -197,6 +198,22 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
         )
         val initializer = expression()
         return Stmt.Const(names, type, initializer)
+    }
+
+    private fun importDeclaration(): Stmt {
+        val path = mutableListOf<Token>()
+        path.add(consume(TokenType.IDENTIFIER, "يُتوقع وجود مسار بعد 'استجلب'."))
+        while (match(TokenType.DOT)) {
+            path.add(consume(TokenType.IDENTIFIER, "يُتوقع وجود اسم بعد '.'."))
+        }
+
+        var isStdLib = false
+        if (match(TokenType.FROM)) {
+            consume(TokenType.MOTHER, "يُتوقع وجود كلمة 'الأم' بعد 'من' للإشارة إلى المكتبة القياسية.")
+            isStdLib = true
+        }
+
+        return Stmt.Import(path, isStdLib)
     }
 
     private fun returnStatement(): Stmt {

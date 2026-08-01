@@ -1,7 +1,11 @@
 package me.kys.sakhr.lang
 
-class TypeChecker(private val diagnostics: DiagnosticEngine) {
+class TypeChecker(
+    private val diagnostics: DiagnosticEngine,
+    private val moduleResolver: ModuleResolver? = null
+) {
     private val scopes = mutableListOf<Scope>()
+    private val checkedModules = mutableMapOf<String, Scope>()
     private var currentFunction: FunctionSignature? = null
     private var loopDepth = 0
 
@@ -10,6 +14,15 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         val functions = mutableMapOf<String, MutableList<FunctionSignature>>()
         val structs = mutableMapOf<String, StructInfo>()
         val enums = mutableMapOf<String, EnumInfo>()
+        
+        fun copyPublicSymbols(): Scope {
+            val newScope = Scope()
+            newScope.variables.putAll(variables) // Assuming all are public for now
+            newScope.functions.putAll(functions)
+            newScope.structs.putAll(structs)
+            newScope.enums.putAll(enums)
+            return newScope
+        }
     }
 
     enum class FunctionKind { FUNCTION, EXTENSION }
@@ -27,14 +40,78 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     )
 
     init {
-        beginScope() // Global scope
+        beginScope() // "Super-global" scope for all built-ins
         
-        for (func in BuiltIns.functions) {
-            registerBuiltIn(func.name, func.params, func.returnType)
+        for (module in BuiltIns.modules.values) {
+            for (func in module.functions) {
+                registerBuiltIn(func.name, func.params, func.returnType)
+            }
+            for (ext in module.extensions) {
+                registerExtension(ext.receiverType, ext.name, ext.params, ext.returnType)
+            }
         }
+    }
 
-        for (ext in BuiltIns.extensions) {
-            registerExtension(ext.receiverType, ext.name, ext.params, ext.returnType)
+    private fun importSymbols(from: Scope, location: Location) {
+        val to = scopes.last()
+        
+        // Import variables
+        for ((name, info) in from.variables) {
+            if (to.variables.containsKey(name)) {
+                diagnostics.report(
+                    SakhrError.TypeError(
+                        "تضارب في الأسماء: المتغير '$name' معرف بالفعل في هذا النطاق أو مستجلب من وحدة أخرى.",
+                        location
+                    )
+                )
+            } else {
+                to.variables[name] = info
+            }
+        }
+        
+        // Import functions (handling overloads)
+        for ((name, sigs) in from.functions) {
+            val toSigs = to.functions.getOrPut(name) { mutableListOf() }
+            for (sig in sigs) {
+                if (toSigs.any { it.params == sig.params && it.kind == sig.kind && it.receiverType == sig.receiverType }) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "تضارب في الأسماء: الدالة '$name' بنفس التوقيع مستجلابة بالفعل.",
+                            location
+                        )
+                    )
+                } else {
+                    toSigs.add(sig)
+                }
+            }
+        }
+        
+        // Import structs
+        for ((name, info) in from.structs) {
+            if (to.structs.containsKey(name)) {
+                diagnostics.report(
+                    SakhrError.TypeError(
+                        "تضارب في الأسماء: البنية '$name' معرفة بالفعل.",
+                        location
+                    )
+                )
+            } else {
+                to.structs[name] = info
+            }
+        }
+        
+        // Import enums
+        for ((name, info) in from.enums) {
+            if (to.enums.containsKey(name)) {
+                diagnostics.report(
+                    SakhrError.TypeError(
+                        "تضارب في الأسماء: التعداد '$name' معرف بالفعل.",
+                        location
+                    )
+                )
+            } else {
+                to.enums[name] = info
+            }
         }
     }
 
@@ -67,6 +144,24 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         scopes[0].functions.getOrPut(key) { mutableListOf() }.add(sig)
     }
 
+    fun check(module: Module) {
+        if (checkedModules.containsKey(module.path)) return
+        
+        // Each module gets its own global scope which inherits from the super-global scope
+        val moduleScope = Scope()
+        
+        scopes.add(moduleScope)
+        
+        collectSignatures(module.statements)
+        
+        for (stmt in module.statements) {
+            checkStmt(stmt)
+        }
+        
+        checkedModules[module.path] = moduleScope
+        scopes.removeAt(scopes.size - 1)
+    }
+
     fun check(statements: List<Stmt>) {
         collectSignatures(statements)
 
@@ -77,7 +172,29 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun collectSignatures(statements: List<Stmt>) {
         for (stmt in statements) {
-            if (stmt is Stmt.Function) {
+            if (stmt is Stmt.Import) {
+                if (moduleResolver == null) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "لا يمكن استخدام 'استجلب' في هذا السياق (نظام الوحدات غير مفعل).",
+                            stmt.path.first().location
+                        )
+                    )
+                    continue
+                }
+                
+                val importedModule = moduleResolver.resolve(stmt)
+                if (importedModule != null) {
+                    // Recursively check the imported module
+                    check(importedModule)
+                    
+                    // Import symbols into current scope
+                    val importedScope = checkedModules[importedModule.path]
+                    if (importedScope != null) {
+                        importSymbols(importedScope, stmt.path.first().location)
+                    }
+                }
+            } else if (stmt is Stmt.Function) {
                 val kind =
                     if (stmt.receiverType != null) FunctionKind.EXTENSION else FunctionKind.FUNCTION
                 val receiverType = stmt.receiverType?.let { SakhrType.fromLexeme(it.lexeme) }
@@ -170,6 +287,9 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
 
     private fun checkStmt(stmt: Stmt) {
         when (stmt) {
+            is Stmt.Import -> {
+                // Imports are handled in collectSignatures, but we need the branch here for exhaustiveness.
+            }
             is Stmt.Block -> {
                 beginScope()
                 collectSignatures(stmt.statements)

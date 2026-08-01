@@ -50,7 +50,8 @@ sealed class SakhrError(
 }
 
 class DiagnosticEngine {
-    private val errors = mutableListOf<SakhrError>()
+    private val _errors = mutableListOf<SakhrError>()
+    val errors: List<SakhrError> get() = _errors
     private var source: String? = null
     private var fileName: String? = null
 
@@ -60,7 +61,7 @@ class DiagnosticEngine {
     }
 
     fun report(error: SakhrError) {
-        errors.add(error)
+        _errors.add(error)
 
         println()
         println("${error.kind}: ${error.message}")
@@ -121,13 +122,13 @@ class DiagnosticEngine {
         }
     }
 
-    fun hasErrors() = errors.isNotEmpty()
+    fun hasErrors() = _errors.isNotEmpty()
 
-    fun errorCount() = errors.size
+    fun errorCount() = _errors.size
 
     /** Arabic-pluralized summary of how many errors were reported. */
     fun summary(): String {
-        return when (val n = errors.size) {
+        return when (val n = _errors.size) {
             0 -> "لم يُعثر على أي أخطاء."
             1 -> "تم العثور على خطأ واحد."
             2 -> "تم العثور على خطأين."
@@ -137,7 +138,7 @@ class DiagnosticEngine {
     }
 
     fun clear() {
-        errors.clear()
+        _errors.clear()
     }
 
     companion object {

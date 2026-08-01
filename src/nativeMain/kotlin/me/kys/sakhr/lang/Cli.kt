@@ -61,8 +61,29 @@ class Cli {
     }
 
     private fun runFile(path: String, args: List<String>) {
-        val source = readFile(path) ?: return
         val diagnostics = DiagnosticEngine()
+        val resolver = ModuleResolver(diagnostics)
+        
+        // Try to find project root
+        val absolutePath = path // Simplified for now
+        val root = resolver.findProjectRoot(absolutePath.substringBeforeLast('/', "."))
+        if (root != null) {
+            try {
+                resolver.loadProjectConfig(root)
+            } catch (e: SakhrError.RuntimeError) {
+                diagnostics.report(e)
+                return
+            }
+        } else {
+            // Requirement: Compilation must fail if the file 'صخر' is missing in the project root.
+            // However, for single-file scripts outside a project, we might want to allow it.
+            // But the prompt says "Every project must contain a root module file... is required for compilation".
+            // I'll enforce it if we're not in REPL.
+            println("خطأ: تعذر العثور على ملف تعريف المشروع 'صخر'. كل مشروع صخر يجب أن يحتوي على هذا الملف في جذره.")
+            return
+        }
+
+        val source = readFile(path) ?: return
         diagnostics.setSource(source, path)
         val lexer = Lexer(source, diagnostics)
         val tokens = lexer.scanTokens()
@@ -74,14 +95,21 @@ class Cli {
 
         if (diagnostics.hasErrors()) return
 
-        val typeChecker = TypeChecker(diagnostics)
-        typeChecker.check(statements)
+        val entryModule = Module(path.substringAfterLast('/').substringBeforeLast('.'), path, statements)
+        
+        val typeChecker = TypeChecker(diagnostics, resolver)
+        
+        resolver.enterModule(entryModule.name)
+        typeChecker.check(entryModule)
+        resolver.exitModule()
 
         if (diagnostics.hasErrors()) return
 
+        // Note: Optimizer currently works on List<Stmt>. 
+        // We'll optimize the entry module's statements.
         val optimized = Optimizer().optimize(statements)
 
-        val interpreter = Interpreter(diagnostics)
+        val interpreter = Interpreter(diagnostics, resolver)
         interpreter.execute(optimized)
 
         val mainFunc = interpreter.globals.getRaw("المطلع")
@@ -103,8 +131,23 @@ class Cli {
     }
 
     private fun checkFile(path: String) {
-        val source = readFile(path) ?: return
         val diagnostics = DiagnosticEngine()
+        val resolver = ModuleResolver(diagnostics)
+        
+        val root = resolver.findProjectRoot(path.substringBeforeLast('/', "."))
+        if (root != null) {
+            try {
+                resolver.loadProjectConfig(root)
+            } catch (e: SakhrError.RuntimeError) {
+                diagnostics.report(e)
+                return
+            }
+        } else {
+            println("خطأ: تعذر العثور على ملف تعريف المشروع 'صخر'.")
+            return
+        }
+
+        val source = readFile(path) ?: return
         diagnostics.setSource(source, path)
         val lexer = Lexer(source, diagnostics)
         val tokens = lexer.scanTokens()
@@ -120,8 +163,12 @@ class Cli {
             return
         }
 
-        val typeChecker = TypeChecker(diagnostics)
-        typeChecker.check(statements)
+        val entryModule = Module(path.substringAfterLast('/').substringBeforeLast('.'), path, statements)
+        val typeChecker = TypeChecker(diagnostics, resolver)
+        
+        resolver.enterModule(entryModule.name)
+        typeChecker.check(entryModule)
+        resolver.exitModule()
 
         if (!diagnostics.hasErrors()) {
             println("تم التحقق بنجاح، ولم يُعثر على أي أخطاء في الكود.")

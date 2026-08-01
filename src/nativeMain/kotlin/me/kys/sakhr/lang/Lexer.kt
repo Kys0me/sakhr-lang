@@ -32,6 +32,9 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
             "بنية" to TokenType.STRUCT,
             "تعداد" to TokenType.ENUM,
             "طابق" to TokenType.MATCH,
+            "استجلب" to TokenType.IMPORT,
+            "من" to TokenType.FROM,
+            "الأم" to TokenType.MOTHER,
             "صح" to TokenType.BOOLEAN,
             "خطأ" to TokenType.BOOLEAN,
             // Multi-word keywords, listed here so misspelling suggestions can offer them
