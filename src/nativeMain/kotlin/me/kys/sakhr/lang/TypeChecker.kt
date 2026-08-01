@@ -449,7 +449,7 @@ class TypeChecker(
 
             is Stmt.ForEach -> {
                 val iterableType = checkExpr(stmt.iterable)
-                if (iterableType != SakhrType.LIST && iterableType != SakhrType.UNKNOWN) {
+                if (iterableType.lexeme != "قائمة" && iterableType != SakhrType.UNKNOWN) {
                     diagnostics.report(
                         SakhrError.TypeError(
                             "حلقة 'لكل' تكرر على عناصر قائمة فقط، والنوع المعطى هنا '${iterableType.lexeme}'.",
