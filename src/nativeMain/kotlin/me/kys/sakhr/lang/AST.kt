@@ -44,6 +44,10 @@ sealed class Stmt {
         val name: Token,
         val fields: List<Field>
     ) : Stmt()
+    data class Enum(
+        val name: Token,
+        val members: List<Token>
+    ) : Stmt()
 }
 
 data class Param(val name: Token, val type: Token?, val defaultValue: Expr? = null)

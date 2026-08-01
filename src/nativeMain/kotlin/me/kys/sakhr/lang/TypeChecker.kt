@@ -9,11 +9,13 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
         val variables = mutableMapOf<String, VariableInfo>()
         val functions = mutableMapOf<String, MutableList<FunctionSignature>>()
         val structs = mutableMapOf<String, StructInfo>()
+        val enums = mutableMapOf<String, EnumInfo>()
     }
 
     enum class FunctionKind { FUNCTION, EXTENSION }
     data class VariableInfo(val type: SakhrType, val isConstant: Boolean, val isDefined: Boolean)
     data class StructInfo(val name: String, val fields: MutableMap<String, SakhrType>)
+    data class EnumInfo(val name: String, val members: Set<String>)
     data class FunctionSignature(
         val name: String,
         val params: MutableList<SakhrType>,
@@ -145,6 +147,22 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     )
                 } else {
                     scope.structs[stmt.name.lexeme] = info
+                }
+            } else if (stmt is Stmt.Enum) {
+                val members = stmt.members.map { it.lexeme }.toSet()
+                val info = EnumInfo(stmt.name.lexeme, members)
+                val scope = scopes.last()
+                if (scope.enums.containsKey(stmt.name.lexeme)) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "توجد تسمية أخرى (تعداد أو بنية) بالاسم '${stmt.name.lexeme}' في هذا النطاق.",
+                            stmt.name.location,
+                            suggestion = "اختر اسماً مختلفاً للتعداد الجديد، أو احذف التعريف المكرر.",
+                            length = stmt.name.lexeme.length
+                        )
+                    )
+                } else {
+                    scope.enums[stmt.name.lexeme] = info
                 }
             }
         }
@@ -480,6 +498,10 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                 // Fields are already collected in collectSignatures first pass.
                 // We just need to check them for valid types if needed.
             }
+
+            is Stmt.Enum -> {
+                // Members are already collected in collectSignatures first pass.
+            }
         }
     }
 
@@ -499,9 +521,12 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
             is Expr.Variable -> {
                 val info = lookupVariable(expr.name)
                 if (info == null) {
-                    // Check if it refers to a struct or function (used as values)
+                    // Check if it refers to a struct, enum or function (used as values)
                     val struct = lookupStruct(expr.name.lexeme)
                     if (struct != null) return SakhrType(struct.name)
+
+                    val enum = lookupEnum(expr.name.lexeme)
+                    if (enum != null) return SakhrType(enum.name)
                     
                     val functions = lookupFunctions(expr.name.lexeme)
                     if (functions.isNotEmpty()) return SakhrType.UNKNOWN // Function as value
@@ -797,6 +822,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
                     if (fieldType != null) return fieldType
                 }
 
+                // Handle enum members
+                val enum = lookupEnum(objType.lexeme)
+                if (enum != null) {
+                    if (enum.members.contains(propertyName)) {
+                        return SakhrType(enum.name)
+                    }
+                }
+
                 // Check for extension methods ('حجم' included: the interpreter treats
                 // bare 'list.حجم' as a bound extension reference, not a number)
                 if (lookupFunctions("${objType.lexeme}::$propertyName").isNotEmpty()) {
@@ -1044,6 +1077,14 @@ class TypeChecker(private val diagnostics: DiagnosticEngine) {
     private fun lookupStruct(name: String): StructInfo? {
         for (i in scopes.size - 1 downTo 0) {
             val info = scopes[i].structs[name]
+            if (info != null) return info
+        }
+        return null
+    }
+
+    private fun lookupEnum(name: String): EnumInfo? {
+        for (i in scopes.size - 1 downTo 0) {
+            val info = scopes[i].enums[name]
             if (info != null) return info
         }
         return null

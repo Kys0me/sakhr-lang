@@ -25,6 +25,7 @@ enum class TokenType {
     NULL,           // فارغ
     VOID,           // عدم
     STRUCT,         // بنية
+    ENUM,           // تعداد
     
     // Literals
     IDENTIFIER,

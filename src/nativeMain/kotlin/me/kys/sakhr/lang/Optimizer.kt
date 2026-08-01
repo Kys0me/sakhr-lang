@@ -59,6 +59,7 @@ class Optimizer {
                 stmt.name,
                 stmt.fields.map { Field(it.name, it.type, it.initializer?.let { init -> optimizeExpr(init) }) }
             )
+            is Stmt.Enum -> stmt
         }
     }
 

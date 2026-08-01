@@ -219,6 +219,10 @@ class SakhrInstance(val struct: SakhrStruct) {
     }
 }
 
+class SakhrEnum(val name: String, val members: Set<String>)
+
+data class SakhrEnumValue(val enum: SakhrEnum, val name: String)
+
 class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
     val globals = Environment()
     private var environment = globals
@@ -333,6 +337,11 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             is Stmt.Struct -> {
                 val struct = SakhrStruct(stmt, environment)
                 environment.define(stmt.name.lexeme, struct, true)
+            }
+
+            is Stmt.Enum -> {
+                val sakhrEnum = SakhrEnum(stmt.name.lexeme, stmt.members.map { it.lexeme }.toSet())
+                environment.define(stmt.name.lexeme, sakhrEnum, true)
             }
 
             is Stmt.If -> {
@@ -608,6 +617,12 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
                     }
                 }
 
+                if (obj is SakhrEnum) {
+                    if (obj.members.contains(expr.name.lexeme)) {
+                        return SakhrEnumValue(obj, expr.name.lexeme)
+                    }
+                }
+
                 val typeName = getSakhrTypeName(obj)
                 val methodName = expr.name.lexeme
 
@@ -724,6 +739,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             return obj.joinToString(prefix = "[", postfix = "]", separator = "، ") { stringify(it) }
 
         if (obj is SakhrInstance) return obj.stringify(this)
+        
+        if (obj is SakhrEnumValue) return obj.name
 
         return obj.toString()
     }
@@ -737,6 +754,8 @@ class Interpreter(private val diagnostics: DiagnosticEngine) : Backend {
             is Boolean -> "منطقي"
             is List<*> -> "قائمة"
             is SakhrInstance -> obj.struct.declaration.name.lexeme
+            is SakhrEnum -> obj.name
+            is SakhrEnumValue -> obj.enum.name
             else -> "مجهول"
         }
     }

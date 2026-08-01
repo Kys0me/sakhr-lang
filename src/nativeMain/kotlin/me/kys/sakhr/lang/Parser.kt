@@ -17,6 +17,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             when {
                 match(TokenType.PROCEDURE) -> function("إجراء")
                 match(TokenType.STRUCT) -> structDeclaration()
+                match(TokenType.ENUM) -> enumDeclaration()
                 match(TokenType.LET) -> letDeclaration()
                 match(TokenType.CONST) -> constDeclaration()
                 else -> {
@@ -42,6 +43,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             when {
                 match(TokenType.PROCEDURE) -> function("إجراء")
                 match(TokenType.STRUCT) -> structDeclaration()
+                match(TokenType.ENUM) -> enumDeclaration()
                 match(TokenType.LET) -> letDeclaration()
                 match(TokenType.CONST) -> constDeclaration()
                 match(TokenType.RETURN) -> returnStatement()
@@ -144,6 +146,19 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
 
         consume(TokenType.END, "يُتوقع وجود 'انتهى' لإنهاء تعريف البنية.")
         return Stmt.Struct(name, fields)
+    }
+
+    private fun enumDeclaration(): Stmt {
+        val name = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للتعداد.")
+        consume(TokenType.BEGIN, "يُتوقع وجود الكلمة المفتاحية 'ابدأ' لبدء تعريف التعداد.")
+
+        val members = mutableListOf<Token>()
+        while (!check(TokenType.END) && !isAtEnd()) {
+            members.add(consume(TokenType.IDENTIFIER, "يجب تحديد أسماء أعضاء التعداد."))
+        }
+
+        consume(TokenType.END, "يُتوقع وجود 'انتهى' لإنهاء تعريف التعداد.")
+        return Stmt.Enum(name, members)
     }
 
     private fun letDeclaration(): Stmt {
