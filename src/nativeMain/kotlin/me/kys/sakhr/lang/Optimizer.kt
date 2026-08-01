@@ -109,6 +109,14 @@ class Optimizer {
             is Expr.Get -> Expr.Get(optimizeExpr(expr.obj), expr.name)
             is Expr.Set -> Expr.Set(optimizeExpr(expr.obj), expr.name, optimizeExpr(expr.value))
             is Expr.Assignment -> Expr.Assignment(expr.name, optimizeExpr(expr.value))
+            is Expr.Lambda -> Expr.Lambda(
+                expr.params,
+                when (val body = expr.body) {
+                    is LambdaBody.Expression -> LambdaBody.Expression(optimizeExpr(body.expr))
+                    is LambdaBody.Block -> LambdaBody.Block(optimizeBlock(body.statements))
+                },
+                expr.location
+            )
             is Expr.Literal, is Expr.Variable, is Expr.Context -> expr
         }
     }

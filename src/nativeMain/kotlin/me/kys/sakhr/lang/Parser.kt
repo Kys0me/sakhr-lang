@@ -62,6 +62,27 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
      * and optional types like "رقم؟".
      */
     private fun parseType(errorMessage: String): Token {
+        if (check(TokenType.LEFT_PAREN)) {
+            val startToken = advance()
+            val paramTypes = mutableListOf<String>()
+            if (!check(TokenType.RIGHT_PAREN)) {
+                do {
+                    paramTypes.add(parseType("يجب تحديد نوع الوسيط.").lexeme)
+                } while (match(TokenType.COMMA))
+            }
+            consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس إغلاق ')' بعد قائمة أنواع الوسائط.")
+            consume(TokenType.ARROW, "يُتوقع وجود السهم '=>' لتعريف نوع الدالة.")
+            val returnType = parseType("يجب تحديد نوع الراجع للدالة.")
+            
+            val lexeme = "(${paramTypes.joinToString("، ")}) => ${returnType.lexeme}"
+            var token = Token(TokenType.IDENTIFIER, lexeme, null, startToken.location)
+            
+            if (match(TokenType.QUESTION_MARK)) {
+                token = Token(token.type, token.lexeme + "؟", token.literal, token.location)
+            }
+            return token
+        }
+
         var type = consumeType(errorMessage)
         if (type.lexeme == "قائمة" && match(TokenType.LEFT_PAREN)) {
             val innerType = parseType("يجب تحديد نوع العناصر داخل القائمة.")
@@ -218,6 +239,10 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
 
     private fun returnStatement(): Stmt {
         val keyword = previous()
+        
+        // Ensure we are not in a short lambda - wait, short lambdas don't have statements.
+        // The check should be in TypeChecker or here if we track context.
+        
         var value: Expr? = null
         // Check if there is an expression after 'رد'. 
         // We assume an expression follows if it's not the end of a block or file.
@@ -571,6 +596,7 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
     }
 
     private fun primary(): Expr {
+        if (match(TokenType.LAMBDA)) return lambda()
         if (match(TokenType.BOOLEAN, TokenType.NUMBER, TokenType.STRING)) return Expr.Literal(previous().literal, previous().location)
         if (match(TokenType.NULL)) return Expr.Literal(null, previous().location)
         if (match(TokenType.VOID)) return Expr.Literal(SakhrUnit, previous().location)
@@ -587,6 +613,43 @@ class Parser(private val tokens: List<Token>, private val diagnostics: Diagnosti
             peek(),
             "كان من المتوقع وجود تعبير هنا (قيمة، اسم متغير، أو استدعاء دالة)."
         )
+    }
+
+    private fun lambda(): Expr {
+        val keyword = previous()
+        consume(TokenType.LEFT_PAREN, "يُتوقع وجود قوس '(' بعد الكلمة 'دالة'.")
+        val parameters = mutableListOf<Param>()
+        if (!check(TokenType.RIGHT_PAREN)) {
+            do {
+                val paramName = consume(TokenType.IDENTIFIER, "يجب تحديد اسم للوسيط.")
+                var paramType: Token? = null
+                if (match(TokenType.COLON)) {
+                    paramType = parseType("يجب تحديد نوع للوسيط.")
+                }
+                parameters.add(Param(paramName, paramType))
+            } while (match(TokenType.COMMA))
+        }
+        consume(TokenType.RIGHT_PAREN, "يُتوقع وجود قوس ')' بعد قائمة الوسائط.")
+
+        return if (match(TokenType.ARROW)) {
+            val expr = expression()
+            if (hasReturn(expr)) {
+                throw error(keyword, "لا يُسمح باستخدام 'رد' داخل الدوال السريعة (ذات التعبير الواحد).")
+            }
+            Expr.Lambda(parameters, LambdaBody.Expression(expr), keyword.location)
+        } else {
+            consume(TokenType.BEGIN, "يُتوقع وجود '=>' أو 'ابدأ' بعد تعريف وسائط الدالة.")
+            val body = block()
+            Expr.Lambda(parameters, LambdaBody.Block(body), keyword.location)
+        }
+    }
+
+    private fun hasReturn(expr: Expr): Boolean {
+        // This is a simple check; we can refine it if we need to search nested expressions.
+        // But since short lambda is a single expression, and 'رد' is a statement,
+        // it shouldn't even parse as an expression. 
+        // However, the user might try to wrap it in a grouping.
+        return false // We'll rely on the parser not allowing Return as an Expr.
     }
 
     // قائمة حرفية: [عنصر1، عنصر2، ...]

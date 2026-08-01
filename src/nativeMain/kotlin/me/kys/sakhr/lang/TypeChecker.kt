@@ -31,7 +31,7 @@ class TypeChecker(
     data class EnumInfo(val name: String, val members: Set<String>)
     data class FunctionSignature(
         val name: String,
-        val params: MutableList<SakhrType>,
+        val params: List<SakhrType>,
         val returnType: SakhrType,
         val kind: FunctionKind,
         val receiverType: SakhrType? = null,
@@ -118,7 +118,7 @@ class TypeChecker(
     private fun registerBuiltIn(name: String, params: List<SakhrType>, returnType: SakhrType) {
         val sig = FunctionSignature(
             name,
-            params.toMutableList(),
+            params,
             returnType,
             FunctionKind.FUNCTION,
             isParamRequired = List(params.size) { true }
@@ -134,7 +134,7 @@ class TypeChecker(
     ) {
         val sig = FunctionSignature(
             name,
-            params.toMutableList(),
+            params,
             returnType,
             FunctionKind.EXTENSION,
             receiverType,
@@ -568,7 +568,7 @@ class TypeChecker(
 
             is Stmt.Let -> {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
-                val initType = stmt.initializer?.let { checkExpr(it) } ?: SakhrType.VOID
+                val initType = stmt.initializer?.let { checkExpr(it, explicitType ?: SakhrType.UNKNOWN) } ?: SakhrType.VOID
 
                 if (stmt.names.size > 1) {
                     // For destructuring, we usually don't have an explicit type for the whole thing.
@@ -616,7 +616,7 @@ class TypeChecker(
 
             is Stmt.Const -> {
                 val explicitType = stmt.type?.let { SakhrType.fromLexeme(it.lexeme) }
-                val initType = checkExpr(stmt.initializer)
+                val initType = checkExpr(stmt.initializer, explicitType ?: SakhrType.UNKNOWN)
                 
                 if (stmt.names.size > 1) {
                     if (explicitType != null) {
@@ -747,8 +747,8 @@ class TypeChecker(
             }
 
             is Expr.Assignment -> {
-                val valueType = checkExpr(expr.value)
                 val info = lookupVariable(expr.name)
+                val valueType = checkExpr(expr.value, info?.type ?: SakhrType.UNKNOWN)
                 if (info == null) {
                     val allVariables = scopes.flatMap { it.variables.keys }
                     val suggestion = DiagnosticEngine.findClosest(expr.name.lexeme, allVariables)
@@ -949,8 +949,6 @@ class TypeChecker(
                         )
                         return SakhrType.UNKNOWN
                     }
-                    
-                    // If not a direct function/struct name, it might be a variable holding a struct/function
                 }
                 
                 // Handle Expr.Get (method calls)
@@ -979,11 +977,32 @@ class TypeChecker(
                     return sig.returnType
                 }
 
-                // Fallback: only reached when the callee is neither a Variable nor a
-                // Get handled above (e.g. a variable holding a struct value used as a
-                // constructor). Checking the callee's type here avoids re-checking
-                // Variable/Get callees, which previously produced duplicate diagnostics.
+                // Fallback: value holding a function or lambda
                 val calleeType = checkExpr(expr.callee)
+
+                if (calleeType.parameterTypes != null) {
+                    // Check parameters
+                    if (positionalArgTypes.size != calleeType.parameterTypes.size || namedArgTypes.isNotEmpty()) {
+                        diagnostics.report(
+                            SakhrError.TypeError(
+                                "الدالة تتوقع ${calleeType.parameterTypes.size} وسائط، ولكن تم تمرير ${positionalArgTypes.size} وسائط.",
+                                expr.paren.location
+                            )
+                        )
+                    } else {
+                        for (i in positionalArgTypes.indices) {
+                            if (!isAssignable(calleeType.parameterTypes[i], positionalArgTypes[i])) {
+                                diagnostics.report(
+                                    SakhrError.TypeError(
+                                        "الوسيط رقم ${i + 1} من نوع '${positionalArgTypes[i].lexeme}'، وهذا لا يتوافق مع النوع المتوقع '${calleeType.parameterTypes[i].lexeme}'.",
+                                        expr.paren.location
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    return calleeType.returnType ?: SakhrType.UNKNOWN
+                }
 
                 // Check if the type itself is a struct (constructor)
                 val struct = lookupStruct(calleeType.lexeme)
@@ -1116,7 +1135,79 @@ class TypeChecker(
             }
 
             is Expr.Grouping -> checkExpr(expr.expression)
+
+            is Expr.Lambda -> checkLambda(expr, SakhrType.UNKNOWN)
         }
+    }
+
+    private fun checkLambda(lambda: Expr.Lambda, expected: SakhrType): SakhrType {
+        val paramTypes = mutableListOf<SakhrType>()
+        
+        beginScope()
+        for (i in lambda.params.indices) {
+            val param = lambda.params[i]
+            val type = if (param.type != null) {
+                SakhrType.fromLexeme(param.type.lexeme)
+            } else if (expected.parameterTypes != null && i < expected.parameterTypes.size) {
+                expected.parameterTypes[i]
+            } else {
+                SakhrType.UNKNOWN
+            }
+            paramTypes.add(type)
+            declare(param.name, type, isConstant = false)
+            define(param.name)
+        }
+
+        val expectedReturn = expected.returnType ?: SakhrType.UNKNOWN
+        
+        val returnType = when (val body = lambda.body) {
+            is LambdaBody.Expression -> {
+                val exprType = checkExpr(body.expr)
+                if (expectedReturn != SakhrType.UNKNOWN && !isAssignable(expectedReturn, exprType)) {
+                    diagnostics.report(
+                        SakhrError.TypeError(
+                            "نوع التعبير المرجوع '${exprType.lexeme}' لا يتوافق مع النوع المتوقع '${expectedReturn.lexeme}'.",
+                            getExprLocation(body.expr)
+                        )
+                    )
+                }
+                exprType
+            }
+            is LambdaBody.Block -> {
+                val enclosingFunction = currentFunction
+                val sig = FunctionSignature(
+                    "<دالة>",
+                    paramTypes,
+                    expectedReturn,
+                    FunctionKind.FUNCTION
+                )
+                currentFunction = sig
+                
+                body.statements.forEach { checkStmt(it) }
+                
+                if (expectedReturn != SakhrType.VOID && expectedReturn != SakhrType.UNKNOWN && !returnsOnAllPaths(body.statements)) {
+                     diagnostics.report(
+                        SakhrError.TypeError(
+                            "الدالة لا تعيد قيمة في جميع المسارات، رغم أن النوع المتوقع هو '${expectedReturn.lexeme}'.",
+                            lambda.location,
+                            suggestion = "أضف 'رد' بقيمة مناسبة."
+                        )
+                    )
+                }
+                
+                currentFunction = enclosingFunction
+                expectedReturn
+            }
+        }
+        
+        endScope()
+        
+        return SakhrType("دالة", null, false, paramTypes, returnType)
+    }
+
+    private fun checkExpr(expr: Expr, expected: SakhrType): SakhrType {
+        if (expr is Expr.Lambda) return checkLambda(expr, expected)
+        return checkExpr(expr)
     }
 
     private fun validateStructCall(
@@ -1244,6 +1335,13 @@ class TypeChecker(
                 if (stmt.elseBranch == null) false
                 else returnsOnAllPaths(stmt.thenBranch) && returnsOnAllPaths(stmt.elseBranch)
             }
+            is Stmt.Match -> {
+                if (stmt.defaultBranch == null) false // Simplified: assume Match is only exhaustive if it has a default branch for now, or check cases.
+                else {
+                    val allCasesReturn = stmt.cases.all { returnsOnAllPaths(it.body) }
+                    allCasesReturn && returnsOnAllPaths(stmt.defaultBranch)
+                }
+            }
             else -> false
         }
     }
@@ -1318,6 +1416,9 @@ class TypeChecker(
                  if (target.elementType == null || source.elementType == null) return true
                  return isAssignable(target.elementType, source.elementType)
              }
+             if (target.parameterTypes != null && source.parameterTypes != null) {
+                 return isFunctionAssignable(target, source)
+             }
              return true
         }
 
@@ -1328,7 +1429,22 @@ class TypeChecker(
             if (target.elementType == null || source.elementType == null) return true
             return isAssignable(target.elementType, source.elementType)
         }
+        
+        if (target.parameterTypes != null && source.parameterTypes != null) {
+            return isFunctionAssignable(target, source)
+        }
+        
         return true
+    }
+
+    private fun isFunctionAssignable(target: SakhrType, source: SakhrType): Boolean {
+        if (target.parameterTypes!!.size != source.parameterTypes!!.size) return false
+        for (i in target.parameterTypes.indices) {
+            // Parameters are contravariant, but Sakhr might not have subtyping yet.
+            // Using strict equality for now, or just recursion if we add subtyping.
+            if (!isAssignable(source.parameterTypes[i], target.parameterTypes[i])) return false
+        }
+        return isAssignable(target.returnType!!, source.returnType!!)
     }
 
     private fun beginScope() {
@@ -1362,6 +1478,7 @@ class TypeChecker(
             is Expr.Grouping -> getExprLocation(expr.expression)
             is Expr.Literal -> expr.location ?: Location(0, 0)
             is Expr.Set -> expr.name.location
+            is Expr.Lambda -> expr.location
         }
     }
 }

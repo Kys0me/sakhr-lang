@@ -14,6 +14,12 @@ sealed class Expr {
     data class Set(val obj: Expr, val name: Token, val value: Expr) : Expr()
     data class Context(val keyword: Token) : Expr()
     data class Assignment(val name: Token, val value: Expr) : Expr()
+    data class Lambda(val params: List<Param>, val body: LambdaBody, val location: Location) : Expr()
+}
+
+sealed class LambdaBody {
+    data class Expression(val expr: Expr) : LambdaBody()
+    data class Block(val statements: List<Stmt>) : LambdaBody()
 }
 
 sealed class Stmt {

@@ -30,6 +30,7 @@ enum class TokenType {
     STRUCT,         // بنية
     ENUM,           // تعداد
     MATCH,          // طابق
+    LAMBDA,         // دالة
     
     // Literals
     IDENTIFIER,
@@ -44,6 +45,7 @@ enum class TokenType {
     COMMA,          // ، (Arabic comma)
     EQUALS,         // =
     EQUALS_EQUALS,  // ==
+    ARROW,          // =>
     BANG_EQUALS,    // !=
     PLUS_EQUALS,    // +=
     MINUS_EQUALS,   // -=

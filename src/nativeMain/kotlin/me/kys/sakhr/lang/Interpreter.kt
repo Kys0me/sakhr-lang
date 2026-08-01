@@ -103,6 +103,39 @@ class SakhrFunction(
     }
 }
 
+class SakhrLambda(
+    private val declaration: Expr.Lambda,
+    private val closure: Environment
+) : SakhrCallable {
+    override fun arity(): Int = declaration.params.size
+    override fun minArity(): Int = declaration.params.size
+    override fun maxArity(): Int = declaration.params.size
+
+    override fun call(
+        interpreter: Interpreter,
+        arguments: List<Any?>,
+        namedArguments: Map<String, Any?>,
+        location: Location
+    ): Any? {
+        val environment = Environment(closure)
+        for (i in declaration.params.indices) {
+            environment.define(declaration.params[i].name.lexeme, arguments[i], false)
+        }
+
+        return when (val body = declaration.body) {
+            is LambdaBody.Expression -> interpreter.evaluateInEnvironment(body.expr, environment)
+            is LambdaBody.Block -> {
+                try {
+                    interpreter.executeBlock(body.statements, environment)
+                } catch (returnValue: Return) {
+                    return returnValue.value
+                }
+                SakhrUnit
+            }
+        }
+    }
+}
+
 class SakhrStruct(
     val declaration: Stmt.Struct,
     val closure: Environment
@@ -758,6 +791,7 @@ class Interpreter(
             is Expr.Literal -> expr.value
             is Expr.Variable -> environment.get(expr.name)
             is Expr.Context -> environment.get(expr.keyword)
+            is Expr.Lambda -> SakhrLambda(expr, environment)
             is Expr.Assignment -> {
                 val value = evaluate(expr.value)
                 environment.assign(expr.name, value)

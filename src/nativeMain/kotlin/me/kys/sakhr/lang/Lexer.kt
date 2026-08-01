@@ -32,6 +32,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
             "بنية" to TokenType.STRUCT,
             "تعداد" to TokenType.ENUM,
             "طابق" to TokenType.MATCH,
+            "دالة" to TokenType.LAMBDA,
             "استجلب" to TokenType.IMPORT,
             "من" to TokenType.FROM,
             "الأم" to TokenType.MOTHER,
@@ -68,6 +69,7 @@ class Lexer(private val source: String, private val diagnostics: DiagnosticEngin
             '،' -> addToken(TokenType.COMMA)
             '=' -> {
                 if (match('=')) addToken(TokenType.EQUALS_EQUALS)
+                else if (match('>')) addToken(TokenType.ARROW)
                 else addToken(TokenType.EQUALS)
             }
 
